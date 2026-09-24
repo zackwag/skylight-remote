@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""MQTT-Bridge: Home Assistant <-> Skylight (BLE Mesh).
+"""MQTT bridge: Home Assistant <-> Skylight (BLE mesh).
 
-Haelt eine dauerhafte Proxy-Verbindung zur Lampe, meldet sich per
-MQTT-Discovery bei HA als schaltbares Licht an und setzt HA-Kommandos
-(on/off) in Mesh-Nachrichten um. Zustand wird zurueckgemeldet.
+Holds a permanent proxy connection to the lamp, announces itself to HA via
+MQTT discovery as a switchable light, and translates HA commands (on/off)
+into mesh messages. State is reported back.
 
-Die Skylight kann von aussen nur an/aus (siehe README) - daher exponieren
-wir sie bewusst als reines On/Off-Licht, damit HA nichts Nutzloses anzeigt.
+From the outside the Skylight can only do on/off (see README) - so we
+deliberately expose it as a pure on/off light, so HA doesn't show anything
+useless.
 
     MQTT_HOST (default 127.0.0.1), MQTT_USER (default skylight),
-    MQTT_PASS (default: aus ~/apps/mosquitto/mqtt-credentials.txt)
+    MQTT_PASS (default: from ~/apps/mosquitto/mqtt-credentials.txt)
 """
 
 import asyncio
@@ -28,11 +29,11 @@ TOPIC_STATE = "skylight/state"
 TOPIC_AVAIL = "skylight/availability"
 DISCOVERY_TOPIC = "homeassistant/light/skylight/config"
 
-# Standardmaessig rein ereignisgesteuert (0 = kein Poll): Zustand wird nach
-# jedem Kommando und einmalig bei jedem (Re-)Connect gespeichert. Das deckt
-# Command-Aenderungen und Stromausfall (Lampe kommt AN zurueck) ohne BLE-Dauer-
-# last ab. Nur wer ein Ausschalten per Original-Fernbedienung zeitnah in HA
-# sehen will, setzt POLL_INTERVAL (Sekunden) > 0.
+# Purely event-driven by default (0 = no polling): state is saved after every
+# command and once on every (re)connect. This covers command changes and power
+# loss (the lamp comes back ON) without a constant BLE load. Only if you want to
+# see a switch-off via the original remote promptly in HA do you set
+# POLL_INTERVAL (seconds) > 0.
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "0"))
 RECONNECT_DELAY = 5
 
@@ -50,19 +51,19 @@ class Bridge:
         self.cfg = load_cfg(CONFIG_FILE)
         self.loop = None
         self.cmd_queue: asyncio.Queue = asyncio.Queue()
-        # Das gerade laufende Kommando. `cmd_queue.get()` ENTNIMMT es aus der
-        # Warteschlange; scheitert danach set_power() an der abgerissenen
-        # BLE-Strecke, war es bisher verloren - der Befehl verpuffte lautlos,
-        # waehrend HA laengst 200 gemeldet hatte. Hier bleibt er stehen, bis er
-        # nachweislich durch ist, und wird nach dem Reconnect nachgereicht.
-        self.offen = None
-        # SOLL und IST getrennt fuehren. Bisher gab es nur einen Zustand:
-        # den zuletzt gemeldeten. Geht ein Schaltbefehl auf der Funkstrecke
-        # verloren, glauben Bridge und HA danach dasselbe Falsche, und
-        # niemand merkt es - das Licht bleibt aus, obwohl ueberall 'an'
-        # steht. Mit dem Soll daneben faellt die Abweichung beim naechsten
-        # Nachmessen auf und wird von selbst geradegezogen.
-        self.soll = None
+        # The command currently in flight. `cmd_queue.get()` REMOVES it from
+        # the queue; if set_power() then fails on the dropped BLE link, it used
+        # to be lost - the command vanished silently while HA had long since
+        # reported 200. Here it stays until it demonstrably went through, and is
+        # re-sent after the reconnect.
+        self.pending = None
+        # Track WANT and ACTUAL separately. Previously there was only one state:
+        # the last one reported. If a switch command is lost on the radio link,
+        # bridge and HA then believe the same wrong thing, and nobody notices -
+        # the light stays off even though everything says 'on'. With the desired
+        # value alongside, the discrepancy shows up on the next re-measurement
+        # and is straightened out on its own.
+        self.want = None
         self.state = "OFF"
 
         self.mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
@@ -73,10 +74,10 @@ class Bridge:
         self.mq.on_connect = self._on_connect
         self.mq.on_message = self._on_message
 
-    # ---------- MQTT (paho-Thread) ----------
+    # ---------- MQTT (paho thread) ----------
 
     def _on_connect(self, client, userdata, flags, reason, props):
-        print(f"MQTT verbunden ({reason})", flush=True)
+        print(f"MQTT connected ({reason})", flush=True)
         client.subscribe(TOPIC_SET)
         client.publish(DISCOVERY_TOPIC, json.dumps({
             "name": "Skylight",
@@ -97,7 +98,7 @@ class Bridge:
         try:
             payload = json.loads(msg.payload)
         except ValueError:
-            print(f"Ungueltiges JSON: {msg.payload!r}", flush=True)
+            print(f"Invalid JSON: {msg.payload!r}", flush=True)
             return
         if "state" in payload:
             asyncio.run_coroutine_threadsafe(
@@ -107,7 +108,7 @@ class Bridge:
         self.mq.publish(TOPIC_STATE, json.dumps({"state": self.state}),
                         retain=True)
 
-    # ---------- Hauptschleife ----------
+    # ---------- Main loop ----------
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
@@ -117,31 +118,31 @@ class Bridge:
         while True:
             try:
                 async with SkylightClient(self.cfg, log=lambda *_: None) as sky:
-                    print("Mesh-Proxy verbunden", flush=True)
+                    print("Mesh proxy connected", flush=True)
                     self.mq.publish(TOPIC_AVAIL, "online", retain=True)
-                    # Einmaliger Read pro (Re-)Connect: reicht ereignisgesteuert
-                    # voellig aus. Nach einem Stromausfall der Lampe reisst die
-                    # Verbindung ab; beim Reconnect lesen wir den Ist-Zustand
-                    # (dann AN, der physische Default) - ohne Dauer-Poll.
+                    # One read per (re)connect: fully sufficient in event-driven
+                    # mode. After a power loss of the lamp the connection drops;
+                    # on reconnect we read the actual state (then ON, the physical
+                    # default) - without constant polling.
                     self.state = "ON" if await sky.get_power() else "OFF"
                     self._publish_state()
                     sky.save()
                     last_poll = time.monotonic()
 
-                    # Beim Abriss verlorenes Kommando zuerst nachholen.
-                    if self.offen is not None:
-                        print(f"reiche Kommando nach: {self.offen}", flush=True)
-                        on = await sky.set_power(self.offen)
-                        self.soll = "ON" if self.offen else "OFF"
-                        self.offen = None
+                    # First catch up on a command lost during a disconnect.
+                    if self.pending is not None:
+                        print(f"re-sending command: {self.pending}", flush=True)
+                        on = await sky.set_power(self.pending)
+                        self.want = "ON" if self.pending else "OFF"
+                        self.pending = None
                         self.state = "ON" if on else "OFF"
                         self._publish_state()
                         sky.save()
                         last_poll = time.monotonic()
 
                     while True:
-                        # POLL_INTERVAL=0 -> rein ereignisgesteuert: wir warten
-                        # unbegrenzt auf das naechste Kommando (kein Poll).
+                        # POLL_INTERVAL=0 -> purely event-driven: we wait
+                        # indefinitely for the next command (no polling).
                         timeout = None
                         if POLL_INTERVAL > 0:
                             timeout = max(1.0, POLL_INTERVAL
@@ -149,43 +150,42 @@ class Bridge:
                         try:
                             want_on = await asyncio.wait_for(
                                 self.cmd_queue.get(), timeout=timeout)
-                            # Erst nach dem Erfolg als erledigt markieren.
-                            self.offen = want_on
+                            # Mark as done only after success.
+                            self.pending = want_on
                             on = await sky.set_power(want_on)
-                            self.offen = None
-                            self.soll = "ON" if want_on else "OFF"
+                            self.pending = None
+                            self.want = "ON" if want_on else "OFF"
                             self.state = "ON" if on else "OFF"
                             self._publish_state()
-                            # Poll-Fenster auch nach einem Kommando neu
-                            # aufziehen. Sonst steht der naechste Poll sofort
-                            # an (last_poll waere uralt -> Timeout 1s) und
-                            # liest die Lampe MITTEN im Dimm-Uebergang; dieser
-                            # Zwischenwert ueberschreibt dann den gerade
-                            # korrekt gemeldeten Zustand.
+                            # Reset the poll window after a command too.
+                            # Otherwise the next poll is due immediately
+                            # (last_poll would be ancient -> timeout 1s) and
+                            # reads the lamp MID dimming transition; that
+                            # intermediate value would then overwrite the
+                            # just-correctly-reported state.
                             last_poll = time.monotonic()
                         except asyncio.TimeoutError:
-                            # Nachmessen - und bei Abweichung vom Soll den
-                            # Befehl wiederholen. Das ist die eigentliche
-                            # Absicherung: Ein verlorener Schaltbefehl
-                            # korrigiert sich damit von selbst, spaetestens
-                            # nach einem Poll-Intervall.
+                            # Re-measure - and if it deviates from the desired
+                            # value, repeat the command. This is the real
+                            # safeguard: a lost switch command corrects itself
+                            # this way, at the latest after one poll interval.
                             on = await sky.get_power()
-                            ist = "ON" if on else "OFF"
-                            if self.soll is not None and ist != self.soll:
-                                print(f"Abweichung: soll={self.soll} ist={ist}"
-                                      " - sende nach", flush=True)
-                                on = await sky.set_power(self.soll == "ON")
-                                ist = "ON" if on else "OFF"
-                            self.state = ist
+                            actual = "ON" if on else "OFF"
+                            if self.want is not None and actual != self.want:
+                                print(f"Discrepancy: want={self.want} actual={actual}"
+                                      " - re-sending", flush=True)
+                                on = await sky.set_power(self.want == "ON")
+                                actual = "ON" if on else "OFF"
+                            self.state = actual
                             self._publish_state()
                             last_poll = time.monotonic()
-                        # Seq-Nummer sofort persistieren: nach hartem
-                        # Stromausfall darf die Datei nie weiter als den
-                        # SEQ_SAFETY_JUMP hinter der Lampe liegen, sonst
-                        # verwirft deren Replay-Protection alles.
+                        # Persist the seq number immediately: after a hard
+                        # power loss the file must never lag more than
+                        # SEQ_SAFETY_JUMP behind the lamp, otherwise its
+                        # replay protection discards everything.
                         sky.save()
             except Exception as e:
-                print(f"Mesh-Verbindung verloren: {e!r} - reconnect in "
+                print(f"Mesh connection lost: {e!r} - reconnect in "
                       f"{RECONNECT_DELAY}s", flush=True)
                 self.mq.publish(TOPIC_AVAIL, "offline", retain=True)
                 save_cfg(CONFIG_FILE, self.cfg)

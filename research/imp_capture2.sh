@@ -1,10 +1,10 @@
 #!/bin/bash
-# Wie imp_capture.sh, aber mit btmon-Mitschnitt der VERBINDUNGS-Events, um zu
-# sehen, ob die Remote ueberhaupt connectet (und ob Bonding/SMP scheitert).
+# Like imp_capture.sh, but with a btmon capture of the CONNECTION events, to
+# see whether the remote connects at all (and whether bonding/SMP fails).
 set -u
 RUNTIME=${1:-45}
 cd /home/pi/apps/skylight-remote
-# Geraete-Identitaeten zur Laufzeit ermitteln (nichts hardcoden):
+# Determine device identities at runtime (hardcode nothing):
 LAMP_MAC=$(python3 -c 'import json;print(json.load(open("skylight-mesh.json"))["mac"])')
 PI_MAC=$(sudo btmgmt info | grep -o 'addr [0-9A-F:]*' | head -1 | cut -d" " -f2)
 
@@ -26,14 +26,14 @@ sudo btmgmt power on  >/dev/null 2>&1; sleep 1
 echo "# MAC: $(sudo btmgmt info | grep -o 'addr [0-9A-F:]*' | head -1)"
 
 sudo timeout $((RUNTIME + 6)) btmon > /tmp/btmon_imp.txt 2>&1 &
-echo "# Fake-Lampe ${RUNTIME}s - JETZT Remote druecken ..."
+echo "# Fake lamp ${RUNTIME}s - PRESS the remote NOW ..."
 sudo ~/imp-venv/bin/python research/imp_lamp.py "$RUNTIME"
 sleep 1
 
-echo "=== Verbindungs-Events ==="
+echo "=== Connection events ==="
 grep -inE "Connection Complete|Device Connected|Device Disconnected|Disconnect|Reason:|SMP|Security Manager|Encrypt|Long.?Term|Pairing|Scan Request|Connect Request|Peer address|LL_" \
      /tmp/btmon_imp.txt | head -50
-echo "=== Zusammenfassung ==="
+echo "=== Summary ==="
 echo "  Connection Complete: $(grep -c "Connection Complete" /tmp/btmon_imp.txt)"
 echo "  Disconnects:         $(grep -c "Disconnect Complete\|Device Disconnected" /tmp/btmon_imp.txt)"
-echo "  SMP/Pairing-Pakete:  $(grep -ci "SMP\|Security Manager\|Pairing" /tmp/btmon_imp.txt)"
+echo "  SMP/pairing packets: $(grep -ci "SMP\|Security Manager\|Pairing" /tmp/btmon_imp.txt)"

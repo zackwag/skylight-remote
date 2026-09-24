@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Rein lesender State-Dump: fragt per GET alle Modell-Zustaende der Lampe ab
-(OnOff, Level, Lightness, CTL, CTL-Temp, HSL, aktuelle Szene, Scene-Register +
-Vendor-Attribute) und dekodiert die Status-Antworten. AENDERT NICHTS (nur GETs).
+Read-only state dump: queries all model states of the lamp via GET (OnOff,
+Level, Lightness, CTL, CTL temp, HSL, current scene, scene register + vendor
+attributes) and decodes the status responses. CHANGES NOTHING (GETs only).
 
-Zweck: den Zustand in EINEM Mode festhalten und mit einem anderen (Default)
-vergleichen -> zeigt, ob/wo ein von der Remote gesetzter Mode lesbar ist.
+Purpose: capture the state in ONE mode and compare it with another (default)
+-> shows whether/where a mode set by the remote is readable.
 
-Bridge vorher stoppen (Proxy exklusiv):
+Stop the bridge first (proxy exclusive):
     sudo systemctl stop skylight-bridge
     python3 research/state_dump.py
     sudo systemctl start skylight-bridge
@@ -25,7 +25,7 @@ from meshlib.state import load_cfg, save_cfg
 from meshlib.proxy import MeshProxy
 from vendor_probe import listen, vendor_op
 
-# (Name, GET-Opcode, erwarteter Status-Opcode)
+# (name, GET opcode, expected status opcode)
 SIG_GETS = [
     ("OnOff",      0x8201, 0x8204),
     ("Level",      0x8205, 0x8208),
@@ -37,7 +37,7 @@ SIG_GETS = [
     ("SceneReg",   0x8244, 0x8245),
 ]
 
-# Vendor-Attribut-GETs (Struktur [tid][attr 2B LE]) - meist ohne Antwort
+# Vendor attribute GETs (structure [tid][attr 2B LE]) - usually no response
 VENDOR_ATTRS = [("ONOFF", 0x0100), ("TARGET_TEMP", 0x010c),
                 ("SCENE_MODE", 0xf004), ("WORKING_STATUS", 0xf001)]
 
@@ -63,26 +63,26 @@ async def main():
     lamp, iv = cfg["unicast"], cfg["iv_index"]
     keys = (("app", app, 0x01), ("dev", dev, 0x02))
 
-    print("=== SIG-Modell-Zustaende (GET, read-only) ===", flush=True)
+    print("=== SIG model states (GET, read-only) ===", flush=True)
     async with MeshProxy(cfg["mac"], ctx, cfg["src"], log=lambda *_: None) as proxy:
         for name, op, want in SIG_GETS:
             r = await get(proxy, cfg, app, lamp, iv, keys, op, want)
             if r:
                 print(f"  {name:<11} status 0x{r[0]:x} = {r[1].hex()}", flush=True)
             else:
-                print(f"  {name:<11} (keine Antwort)", flush=True)
+                print(f"  {name:<11} (no response)", flush=True)
 
-        print("\n=== Vendor-Attribut-GETs (0xD0) ===", flush=True)
+        print("\n=== Vendor attribute GETs (0xD0) ===", flush=True)
         for aname, attr in VENDOR_ATTRS:
             payload = bytes([tid(cfg)]) + attr.to_bytes(2, "little")
             r = await get(proxy, cfg, app, lamp, iv, keys,
                           vendor_op(0xD0), None, payload)
             print(f"  {aname:<15} 0x{attr:04x} -> "
-                  f"{'0x%x %s' % (r[0], r[1].hex()) if r else '(keine Antwort)'}",
+                  f"{'0x%x %s' % (r[0], r[1].hex()) if r else '(no response)'}",
                   flush=True)
         save_cfg(CONFIG_FILE, cfg)
 
-    print("\n# Fertig. Wert notieren, mit dem anderen Mode/Default vergleichen.")
+    print("\n# Done. Note the value, compare with the other mode/default.")
 
 
 if __name__ == "__main__":

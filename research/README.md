@@ -1,26 +1,26 @@
-# research/ — Diagnose- & Reverse-Engineering-Tools
+# research/ — diagnostic & reverse-engineering tools
 
-Diese Skripte sind bei der (erfolglosen) Jagd nach **Helligkeits-/Farb-/Mode-
-Steuerung** der Skylight entstanden. Für den **Normalbetrieb sind sie nicht
-nötig** — On/Off läuft über den Kern-Code im Repo-Root (`skylight.py`,
-`mqtt_bridge.py`). Hier liegt das Werkzeug für Analyse und einen späteren
-Firmware-Dump-Anlauf. Hintergrund & Fazit: siehe [Haupt-README, „Die Reise"](../README.md).
+These scripts came out of the (unsuccessful) hunt for **brightness/color/mode
+control** of the Skylight. They are **not needed for normal operation** — on/off
+runs through the core code in the repo root (`skylight.py`, `mqtt_bridge.py`).
+This is the toolkit for analysis and a later firmware-dump attempt. Background &
+conclusion: see [main README, "The journey"](../README.md).
 
-## Ausführen
+## Running
 
-**Immer aus dem Repo-Root** starten (nicht aus `research/`), damit die
-Config gefunden wird:
+**Always start from the repo root** (not from `research/`), so the config is
+found:
 
 ```bash
 cd ~/apps/skylight-remote
 python3 research/read_composition.py
 ```
 
-Ein Pfad-Bootstrap oben in jedem Tool hängt das Repo-Root an `sys.path`, sodass
-`from meshlib import …` und `skylight-mesh.json` sauber gefunden werden.
+A path bootstrap at the top of every tool appends the repo root to `sys.path`,
+so that `from meshlib import …` and `skylight-mesh.json` are found cleanly.
 
-**Wichtig:** Die meisten Mesh-Tools brauchen die **Proxy-Verbindung exklusiv** —
-vorher die Bridge stoppen:
+**Important:** most mesh tools need the **proxy connection exclusively** — stop
+the bridge first:
 
 ```bash
 sudo systemctl stop skylight-bridge
@@ -28,39 +28,39 @@ python3 research/<tool>.py
 sudo systemctl start skylight-bridge
 ```
 
-## Übersicht
+## Overview
 
-| Tool | Zweck |
+| Tool | Purpose |
 |---|---|
-| `read_composition.py` | Composition Data auslesen (mit Segment-Reassembly) |
-| `model_probe.py` | alle SIG-Modelle binden + SET-Befehle testen |
-| `scene_probe.py` | Scene-Modell: gespeicherte Szenen listen + Recall |
-| `vendor_probe.py` | Vendor-Modell binden + Opcodes senden/dekodieren |
-| `vendor_sweep.py` | Vendor-Opcode-Bereich mit Kontrast-Payloads durchfahren |
-| `vendor_attr2.py` | Attribut-Probe mit **korrekter** SDK-Struktur `[tid][attr 2B LE][value]`, sucht `ATTR_STATUS 0xD3` |
-| `vendor_rc_sweep.py` | `VD_RC_KEY_REPORT 0xC0` korrekt (8-Byte-Payload) emulieren, Code-Sweep 0x00–0xFF |
-| `final_probe.py` | „offene Ecken": Power-Level, RC-Key-Sweep, 0xFDA0-Writes |
-| `onoff_modes.py` | OnOff-Pfad-Varianten als Mode-Selektor testen |
-| `gatt_enum.py` | GATT-Services/Characteristics der Lampe auflisten |
-| `fda0_probe.py` | das custom 0xFDA0-Service auslesen |
-| `mesh_monitor.py` | passiver, **ungefilterter** Mesh-Mitschnitt (jede Element-Adresse + Control), optional mit On/Off-Toggle zur Provokation |
-| `scan_all.py` | breiter BLE-Scan — findet die Remote / `0x1827`-Advertisements (koppelbare Geräte) |
-| `dump_lamp_adv.py` | echtes Advertising der Lampe mitschneiden |
-| `sniff_mesh.py` | Mesh-Adv passiv mitschneiden (btmon → BTSnoop-Parse) |
-| `decode_capture.py` | Mitschnitt mit NetKey+AppKey voll entschlüsseln |
-| `bruteforce_netkey.py` | NetKey-Kandidaten gegen eine Network-PDU testen |
-| `netid_crack.py` | Default-NetKeys gegen eine bekannte Network-ID prüfen |
-| `imp_lamp.py` | Pi als Fake-Lampe (bless GATT-Server) |
-| `imp_capture.sh` / `imp_capture2.sh` | Fake-Lampe + MAC-Spoof + Cleanup-Orchestrierung |
-| `node_reset.py` | `Config Node Reset 0x8049` — Lampe aus unserem Netz nehmen (wird wieder koppelbar) |
-| `remote_probe.py` | mit der Remote (Proxy-Server) verbinden + alle lesbaren GATT-Chars/Adv auslesen |
-| `remote_ffc0.py` | TI-OAD-Service `f000ffc0` der Remote untersuchen (read-only) |
-| `remote_listen.py` | Proxy der Remote abonnieren (`2ade`) + mitschneiden (Werks-Key-verschlüsselt) |
-| `imp_prov.py` | Pi als **unprovisionierte** Fake-Lampe (`0x1827`, btmgmt-Adv, UUID aus Adapter-MAC) — loggt Provisioning-`INVITE` |
-| `imp_capture_prov.sh` | `imp_prov.py` + MAC-Spoof auf die Lampen-MAC + Cleanup |
-| `pbadv_probe.sh` | Raw-HCI PB-ADV-Beacon (`0x2B`) senden + scannen (optional MAC-Spoof); prüft, ob die Remote per PB-ADV provisioniert |
+| `read_composition.py` | read the Composition Data (with segment reassembly) |
+| `model_probe.py` | bind all SIG models + test SET commands |
+| `scene_probe.py` | Scene model: list stored scenes + recall |
+| `vendor_probe.py` | bind the vendor model + send/decode opcodes |
+| `vendor_sweep.py` | sweep the vendor opcode range with contrasting payloads |
+| `vendor_attr2.py` | attribute probe with the **correct** SDK structure `[tid][attr 2B LE][value]`, looks for `ATTR_STATUS 0xD3` |
+| `vendor_rc_sweep.py` | emulate `VD_RC_KEY_REPORT 0xC0` correctly (8-byte payload), code sweep 0x00–0xFF |
+| `final_probe.py` | "loose ends": power level, RC key sweep, 0xFDA0 writes |
+| `onoff_modes.py` | test on/off path variants as a mode selector |
+| `gatt_enum.py` | list the lamp's GATT services/characteristics |
+| `fda0_probe.py` | read the custom 0xFDA0 service |
+| `mesh_monitor.py` | passive, **unfiltered** mesh capture (every element address + control), optionally with an on/off toggle to provoke it |
+| `scan_all.py` | broad BLE scan — finds the remote / `0x1827` advertisements (pairable devices) |
+| `dump_lamp_adv.py` | capture the lamp's actual advertising |
+| `sniff_mesh.py` | passively capture mesh adv (btmon → BTSnoop parse) |
+| `decode_capture.py` | fully decrypt a capture with NetKey+AppKey |
+| `bruteforce_netkey.py` | test NetKey candidates against a network PDU |
+| `netid_crack.py` | check default NetKeys against a known Network ID |
+| `imp_lamp.py` | Pi as a fake lamp (bless GATT server) |
+| `imp_capture.sh` / `imp_capture2.sh` | fake lamp + MAC spoof + cleanup orchestration |
+| `node_reset.py` | `Config Node Reset 0x8049` — take the lamp out of our network (it becomes pairable again) |
+| `remote_probe.py` | connect to the remote (proxy server) + read all readable GATT chars/adv |
+| `remote_ffc0.py` | inspect the remote's TI OAD service `f000ffc0` (read-only) |
+| `remote_listen.py` | subscribe to the remote's proxy (`2ade`) + capture (factory-key-encrypted) |
+| `imp_prov.py` | Pi as an **unprovisioned** fake lamp (`0x1827`, btmgmt adv, UUID from adapter MAC) — logs the provisioning `INVITE` |
+| `imp_capture_prov.sh` | `imp_prov.py` + MAC spoof to the lamp's MAC + cleanup |
+| `pbadv_probe.sh` | send + scan a raw-HCI PB-ADV beacon (`0x2B`) (optional MAC spoof); checks whether the remote provisions over PB-ADV |
 
-Selbsttests ohne Hardware:
+Self-tests without hardware:
 
 ```bash
 python3 research/decode_capture.py --selftest

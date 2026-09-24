@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Sendet EIN Light-Lightness-Set (0x824C) mit gegebenem 16-Bit-Wert und gibt den
-Status zurueck. Fuer den objektiven Lux-Test (aendert die Lampe -> danach Lux
-ueber HA messen, ob die LED wirklich reagiert).
+Sends ONE Light Lightness Set (0x824C) with the given 16-bit value and returns
+the status. For the objective lux test (changes the lamp -> then measure lux via
+HA to see whether the LED actually reacts).
 
     sudo systemctl stop skylight-bridge
-    python3 research/set_lightness.py <hex4>   # z.B. 4000 (25%) oder ffff (voll)
+    python3 research/set_lightness.py <hex4>   # e.g. 4000 (25%) or ffff (full)
     sudo systemctl start skylight-bridge
 """
 

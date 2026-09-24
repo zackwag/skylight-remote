@@ -1,330 +1,329 @@
 # skylight-remote
 
-Die **Philips Skylight** LED-Deckenleuchte per **Home Assistant** steuerbar
-machen — obwohl sie ab Werk **kein** Smart-Home-Interface hat (kein Wi-Fi, kein
-offizielles Zigbee/Matter, nur die mitgelieferte Fernbedienung).
+Make the **Philips Skylight** LED ceiling light controllable via **Home
+Assistant** — even though it ships with **no** smart-home interface (no Wi-Fi, no
+official Zigbee/Matter, just the bundled remote control).
 
-Die Lampe ist ein **Bluetooth-SIG-Mesh**-Knoten (2,4 GHz, Telink-Chip). Dieses
-Projekt implementiert einen eigenen, schlanken Mesh-Stack in Python, nimmt die
-Lampe ins Netz (PB-GATT-Provisioning), verbindet sich als **Proxy** und
-exponiert sie über **MQTT** an Home Assistant.
+The lamp is a **Bluetooth SIG Mesh** node (2.4 GHz, Telink chip). This project
+implements its own lightweight mesh stack in Python, takes the lamp into the
+network (PB-GATT provisioning), connects as a **proxy**, and exposes it to Home
+Assistant over **MQTT**.
 
-**Status:** ✅ läuft. An/Aus ist zuverlässig steuerbar — als CLI *und* als
-MQTT-Bridge (systemd-Dienst auf einem Raspberry Pi 4). Siehe [Was geht (und
-was nicht)](#was-geht-und-was-nicht).
+**Status:** ✅ working. On/off is reliably controllable — both as a CLI *and* as
+an MQTT bridge (systemd service on a Raspberry Pi 4). See [What works (and what
+doesn't)](#what-works-and-what-doesnt).
 
 ---
 
-## Das Gerät
+## The device
 
 | | |
 |---|---|
-| Produkt | Philips Skylight (Signify) |
-| Funk | **Bluetooth LE / SIG Mesh, 2,4 GHz** |
-| BLE-Name | `BK_MESH_light` |
+| Product | Philips Skylight (Signify) |
+| Radio | **Bluetooth LE / SIG Mesh, 2.4 GHz** |
+| BLE name | `BK_MESH_light` |
 | Chip | Telink |
 | Provisioning | Mesh Provisioning Service `0x1827` |
 | Proxy | Mesh Proxy Service `0x1828` |
 
-Die Composition Data meldet Standard-SIG-Modelle (`Generic OnOff`,
-`Light Lightness`, `Light CTL`, `Light HSL`, `Scene`, `Scheduler`, …) — aber
-nur ein Teil davon wirkt an der realen Lampe.
+The Composition Data reports standard SIG models (`Generic OnOff`,
+`Light Lightness`, `Light CTL`, `Light HSL`, `Scene`, `Scheduler`, …) — but only
+some of them actually do anything on the real lamp.
 
-## Was geht (und was nicht)
+## What works (and what doesn't)
 
-- ✅ **Generic OnOff** — an/aus, zuverlässig.
-  **Firmware-Quirk:** Die beiden Richtungen benutzen **unterschiedliche
-  Kodierungen** — am Gerät gemessen mit
+- ✅ **Generic OnOff** — on/off, reliable.
+  **Firmware quirk:** the two directions use **different encodings** — measured
+  on the device with
   [`research/onoff_truth.py`](research/onoff_truth.py):
 
-  | Richtung | Kodierung |
+  | Direction | Encoding |
   |---|---|
-  | **SET** | invertiert: Wire `0x00` schaltet **AN**, `0x01` schaltet **AUS** |
-  | Status auf ein SET | spiegelt nur das gesendete Wire-Byte zurück (also ebenfalls invertiert) — **keine** Messung des echten Zustands |
-  | **GET** | standardkonform: `0x01` = an, `0x00` = aus |
+  | **SET** | inverted: wire `0x00` turns it **ON**, `0x01` turns it **OFF** |
+  | Status in response to a SET | merely echoes the sent wire byte back (so also inverted) — **not** a measurement of the real state |
+  | **GET** | spec-compliant: `0x01` = on, `0x00` = off |
 
-  Der Code kapselt das in `onoff_wire` / `onoff_echo` / `onoff_phys`, nach
-  außen ist alles normal. Wer beide Richtungen gleich behandelt, bekommt bei
-  jedem Lesen exakt das Gegenteil.
-- ❌ **Lightness / CTL / HSL / Level / Szenen / Modes** — die Firmware
-  *quittiert* diese Nachrichten mit korrektem Status, **treibt die LED aber
-  nicht damit an**. Von den 22 SIG-Modellen ist **nur `Generic OnOff` real
-  verdrahtet**; alle anderen sind ein **Schatten-Zustand**. Helligkeit, Weißton,
-  Farbe und die 6 Modes (5 Presets + „Day Rhythm") laufen ausschließlich über
-  ein **Telink-Vendor-Modell** (`Company 0x0211`, Model `0x0000`), dessen
-  Opcode + Payload wir nur aus einem **Firmware-Dump** bekämen. Deshalb
-  exponieren wir die Lampe bewusst als **reines On/Off-Licht**. Details +
-  ausgeschlossene Wege siehe [Die Reise](#die-reise-damit-future-me-die-sackgassen-kennt).
+  The code wraps this in `onoff_wire` / `onoff_echo` / `onoff_phys`; from the
+  outside everything is normal. Anyone treating both directions the same way
+  gets exactly the opposite on every read.
+- ❌ **Lightness / CTL / HSL / Level / scenes / modes** — the firmware
+  *acknowledges* these messages with a correct status, **but does not drive the
+  LED with them**. Of the 22 SIG models, **only `Generic OnOff` is actually
+  wired up**; all the others are a **shadow state**. Brightness, white tone,
+  color, and the 6 modes (5 presets + "Day Rhythm") run exclusively over a
+  **Telink vendor model** (`Company 0x0211`, Model `0x0000`), whose opcode +
+  payload we could only obtain from a **firmware dump**. That's why we
+  deliberately expose the lamp as a **pure on/off light**. Details + the ruled-
+  out paths: see [The journey](#the-journey-so-future-me-knows-the-dead-ends).
 
-## Architektur
+## Architecture
 
 ```
 Home Assistant ──MQTT──> skylight-remote (Raspberry Pi 4)
-                              │  eigener SIG-Mesh-Stack (meshlib/)
+                              │  own SIG mesh stack (meshlib/)
                               ▼  BLE (Mesh Proxy 0x1828, via bleak)
                         BK_MESH_light (Telink, SIG Mesh)
 ```
 
-Der Pi hält die Mesh-Keys (NetKey/AppKey/DevKey + Unicast-Adresse der Lampe in
-`skylight-mesh.json`), verbindet sich als Proxy und mappt MQTT-Kommandos auf
-Mesh-Nachrichten. Warum der Pi und kein Extra-Gateway: Home Assistant läuft eh
-dort, BLE ist onboard.
+The Pi holds the mesh keys (NetKey/AppKey/DevKey + the lamp's unicast address in
+`skylight-mesh.json`), connects as a proxy, and maps MQTT commands onto mesh
+messages. Why the Pi and not a separate gateway: Home Assistant already runs
+there, and BLE is onboard.
 
 ---
 
-## Benutzung
+## Usage
 
 ### CLI
 
 ```bash
-python3 skylight.py on         # einschalten
-python3 skylight.py off        # ausschalten
-python3 skylight.py toggle     # umschalten
-python3 skylight.py status     # aktuellen Zustand abfragen
-python3 skylight.py scan       # BLE-Sicht + RSSI der Lampe
-python3 skylight.py provision  # frisch ins Mesh aufnehmen
+python3 skylight.py on         # turn on
+python3 skylight.py off        # turn off
+python3 skylight.py toggle     # toggle
+python3 skylight.py status     # query current state
+python3 skylight.py scan       # BLE visibility + RSSI of the lamp
+python3 skylight.py provision  # freshly take it into the mesh
 ```
 
-### MQTT-Bridge
+### MQTT bridge
 
-`mqtt_bridge.py` hält eine dauerhafte Proxy-Verbindung und meldet die Lampe per
-**HA-MQTT-Discovery** automatisch als `light.skylight` an (JSON-Schema, on/off).
+`mqtt_bridge.py` holds a permanent proxy connection and automatically announces
+the lamp via **HA MQTT discovery** as `light.skylight` (JSON schema, on/off).
 
 | Topic | Payload | |
 |---|---|---|
-| `skylight/set` | `{"state": "ON"｜"OFF"}` | Kommando von HA |
-| `skylight/state` | `{"state": "ON"｜"OFF"}` | Zustand (retained) |
+| `skylight/set` | `{"state": "ON"｜"OFF"}` | command from HA |
+| `skylight/state` | `{"state": "ON"｜"OFF"}` | state (retained) |
 | `skylight/availability` | `online` / `offline` | LWT (retained) |
 
-Konfiguration über Env-Variablen: `MQTT_HOST` (default `127.0.0.1`),
-`MQTT_USER` (default `skylight`), `MQTT_PASS` (default aus
+Configuration via env variables: `MQTT_HOST` (default `127.0.0.1`),
+`MQTT_USER` (default `skylight`), `MQTT_PASS` (default from
 `~/apps/mosquitto/mqtt-credentials.txt`), `POLL_INTERVAL` (default `0`).
 
-**Zustandslogik — rein ereignisgesteuert:** Der Zustand wird nach jedem
-Kommando gespeichert und zusätzlich einmalig bei jedem (Re-)Connect gelesen.
-Das deckt zwei Fälle ohne Dauer-Poll ab: Schalten über HA/HomeKit (Trigger)
-und **Stromausfall der Lampe** — dabei reißt die Proxy-Verbindung ab, und beim
-Reconnect liest die Bridge den Ist-Zustand, der dann `ON` ist (physischer
-Default der Lampe). Kommt gar keine Antwort mehr, gilt die Lampe als offline
-(HA „unavailable", HomeKit „Reagiert nicht") statt auf veraltetem `ON` zu
-hängen; Reads werden bei Paketverlust vorher mehrfach wiederholt.
+**State logic — purely event-driven:** the state is saved after every command
+and additionally read once on every (re)connect. This covers two cases without
+continuous polling: switching via HA/HomeKit (trigger) and a **power loss of the
+lamp** — in that case the proxy connection drops, and on reconnect the bridge
+reads the actual state, which is then `ON` (the lamp's physical default). If no
+response comes at all, the lamp is considered offline (HA "unavailable", HomeKit
+"Not Responding") instead of hanging on a stale `ON`; reads are retried several
+times beforehand on packet loss.
 
-Nur ein Ausschalten über die **Original-Fernbedienung** (kein Kommando, kein
-Stromausfall) wird ereignisgesteuert nicht erkannt. Wer das zeitnah in HA sehen
-will, setzt `POLL_INTERVAL` (Sekunden) > 0.
+Only turning off via the **original remote control** (no command, no power loss)
+is not detected in event-driven mode. If you want to see that promptly in HA,
+set `POLL_INTERVAL` (seconds) > 0.
 
 ---
 
 ## Deployment (Raspberry Pi 4)
 
-Der Dienst läuft auf dem Raspberry Pi (Host über `$PI_HOST` gesetzt, z. B. der
-Pi-Hostname/die IP im LAN) unter `/home/pi/apps/skylight-remote` als systemd-Unit
+The service runs on the Raspberry Pi (host set via `$PI_HOST`, e.g. the Pi's
+hostname/IP on the LAN) under `/home/pi/apps/skylight-remote` as the systemd unit
 `skylight-bridge.service`.
 
 ```bash
-# einmalig
+# one-time
 sudo apt install -y python3-pip bluez
 pip3 install bleak paho-mqtt
 git clone https://github.com/l-carta/skylight-remote.git ~/apps/skylight-remote
 sudo cp ~/apps/skylight-remote/skylight-bridge.service /etc/systemd/system/
 sudo systemctl enable --now skylight-bridge
 
-# updaten
+# update
 cd ~/apps/skylight-remote && git pull && sudo systemctl restart skylight-bridge
 ```
 
-`skylight-mesh.json` (Keys + Zählerstände) ist **gitignored** und bleibt bei
-jedem Pull unberührt.
+`skylight-mesh.json` (keys + counters) is **gitignored** and stays untouched on
+every pull.
 
 ---
 
-## Projektstruktur
+## Project structure
 
-| Datei | Zweck |
+| File | Purpose |
 |---|---|
 | `skylight.py` | CLI — on/off/toggle/status/scan/provision |
-| `mqtt_bridge.py` | MQTT ↔ Mesh, HA-Discovery, systemd-Dienst |
-| `provision.py` | Lampe frisch ins Mesh aufnehmen |
-| `scan.py` | BLE-Scan, findet die Lampe |
-| `meshlib/crypto.py` | Mesh-Krypto-Primitive (s1/k2, AES-CMAC/CCM) |
-| `meshlib/network.py` | Network-/Transport-PDU-Kodierung, Segmentierung |
-| `meshlib/proxy.py` | Mesh-Proxy-Verbindung über BLE (bleak) |
-| `meshlib/provisioner.py` | PB-GATT-Provisioning |
-| `meshlib/skylight.py` | `SkylightClient` — High-Level-Steuerung |
-| `meshlib/state.py` | Laden/Speichern von `skylight-mesh.json` |
-| `skylight-bridge.service` | systemd-Unit |
-| `test_crypto.py` | Krypto-Tests (Bluetooth-Mesh-Spec-Testvektoren) |
+| `mqtt_bridge.py` | MQTT ↔ mesh, HA discovery, systemd service |
+| `provision.py` | freshly take the lamp into the mesh |
+| `scan.py` | BLE scan, finds the lamp |
+| `meshlib/crypto.py` | mesh crypto primitives (s1/k2, AES-CMAC/CCM) |
+| `meshlib/network.py` | network/transport PDU encoding, segmentation |
+| `meshlib/proxy.py` | mesh proxy connection over BLE (bleak) |
+| `meshlib/provisioner.py` | PB-GATT provisioning |
+| `meshlib/skylight.py` | `SkylightClient` — high-level control |
+| `meshlib/state.py` | loading/saving `skylight-mesh.json` |
+| `skylight-bridge.service` | systemd unit |
+| `test_crypto.py` | crypto tests (Bluetooth Mesh spec test vectors) |
 
 ---
 
-## Betrieb & Fallstricke
+## Operation & pitfalls
 
-**Replay-Protection:** Die Lampe verwirft Mesh-Nachrichten mit einer bereits
-gesehenen Sequenznummer **stillschweigend**. Nach einem harten Stromausfall
-kann die gespeicherte `seq` hinter dem Stand der Lampe liegen → die Lampe
-reagiert nicht mehr. Gegenmaßnahmen im Code:
+**Replay protection:** the lamp **silently** discards mesh messages with an
+already-seen sequence number. After a hard power loss the stored `seq` can lag
+behind the lamp's state → the lamp stops responding. Countermeasures in the code:
 
-- `mqtt_bridge.py` persistiert die `seq` nach **jedem Poll** (nicht nur beim
-  Disconnect).
-- `state.py` springt beim Laden zusätzlich um `SEQ_SAFETY_JUMP = 512` nach vorn.
+- `mqtt_bridge.py` persists the `seq` after **every poll** (not just on
+  disconnect).
+- `state.py` additionally jumps forward by `SEQ_SAFETY_JUMP = 512` on load.
 
-Tritt es trotzdem auf: `seq` in `skylight-mesh.json` weit nach vorn setzen (der
-24-Bit-Raum reicht bis 16,7 Mio) und den Dienst neu starten.
+If it happens anyway: set `seq` in `skylight-mesh.json` far forward (the 24-bit
+space goes up to 16.7 million) and restart the service.
 
-## Sicherheit
+## Security
 
-`skylight-mesh.json` enthält NetKey/AppKey/DevKey der Lampe → geheim halten,
-**niemals committen** (steht in `.gitignore`). Wer die Lampe neu ins eigene
-Netz provisioniert, kann der Original-Fernbedienung vorübergehend die Kontrolle
-entziehen; ein Factory-Reset der Lampe stellt das wieder her.
+`skylight-mesh.json` contains the lamp's NetKey/AppKey/DevKey → keep it secret,
+**never commit it** (it's in `.gitignore`). Anyone who re-provisions the lamp
+into their own network can temporarily deprive the original remote of control; a
+factory reset of the lamp restores it.
 
 ---
 
-## Die Reise (damit „future me" die Sackgassen kennt)
+## The journey (so "future me" knows the dead ends)
 
-**Sackgasse 433 MHz ❌** — Erste Annahme: die Remote sendet auf 433,92 MHz OOK,
-also fangen wir das Signal mit einem CC1101 ab und spielen es nach. Aufbau mit
-Arduino MKR + CC1101. Gelernt: erstes Modul war 868 MHz (am 433-Band taub),
-zweites hatte einen wackligen SMA-Kontakt — und der eigentliche Grund, warum nie
-ein sauberes Signal kam: die „Ausschläge" waren **Fremdfunk**. Die Skylight
-sendet gar nicht auf 433. **Lehre:** erst die Funktechnik verifizieren, dann
-Hardware kaufen — ein BLE-Scan am Anfang hätte Stunden gespart.
+**Dead end: 433 MHz ❌** — first assumption: the remote transmits on 433.92 MHz
+OOK, so we capture the signal with a CC1101 and replay it. Setup with an Arduino
+MKR + CC1101. Lesson learned: the first module was 868 MHz (deaf on the 433
+band), the second had a wobbly SMA contact — and the real reason a clean signal
+never showed up: the "spikes" were **stray RF**. The Skylight doesn't transmit on
+433 at all. **Takeaway:** verify the radio technology first, then buy hardware —
+a BLE scan at the start would have saved hours.
 
-**Durchbruch: es ist Bluetooth ✅** — Ein BLE-Scan zeigt sofort `BK_MESH_light`
-mit dem Mesh-Provisioning-Service `0x1827`. Erst mit der App **nRF Mesh**
-provisioniert und On/Off bestätigt, dann den Mesh-Stack selbst in Python
-nachgebaut (`meshlib/`) — inklusive eigenem PB-GATT-Provisioning, sodass wir
-kein fremdes Tool mehr brauchen.
+**Breakthrough: it's Bluetooth ✅** — a BLE scan immediately shows
+`BK_MESH_light` with the mesh provisioning service `0x1827`. First provisioned
+with the **nRF Mesh** app and confirmed on/off, then rebuilt the mesh stack
+itself in Python (`meshlib/`) — including our own PB-GATT provisioning, so we no
+longer need any external tool.
 
-**Die Jagd nach Helligkeit/Modes ❌ (erschöpfend, alles ausgeschlossen)** — On/Off
-läuft, aber Helligkeit/Farbe/Modes nicht. Systematisch durchgespielt:
+**The hunt for brightness/modes ❌ (exhaustive, everything ruled out)** — on/off
+works, but brightness/color/modes don't. Worked through systematically:
 
-- **Composition Data entschlüsselt** (`read_composition.py`) → dabei einen echten
-  **Bug im Stack** gefunden: `_app_nonce` setzte das **ASZMIC-Bit** nicht, sodass
-  segmentierte Nachrichten (SZMIC=1) nicht entschlüsselbar waren (jetzt gefixt).
-  Ergebnis: Node ist `CID 0x0211` (Telink) mit **2 Vendor-Modellen**
-  (`0x0211/0x0000`, `/0x0001`) neben den SIG-Modellen.
-- **Alle SIG-Modelle gebunden + getestet** (`model_probe.py`, `scene_probe.py`):
-  Level, Lightness, CTL, CTL-Temperatur, HSL, Hue, Saturation, **8 gespeicherte
-  Szenen via Scene Recall** — alle antworten mit Status, **keins bewegt die LED**.
-- **Alle 64 Vendor-Opcodes** `0xC0–0xFF` gefuzzt (`vendor_sweep.py`,
-  `final_probe.py`), inkl. `VD_RC_KEY_REPORT` (0xC0) mit Key-Codes und
-  strukturierten Payloads → nichts.
-- **On/Off-Pfad** in allen Varianten (Byte als Mode-Selektor, Wiederhol-Press,
-  Transition-Bytes) → nichts. **`0xFDA0`-Service** gelesen *und* beschrieben → nichts.
-- **Übergangszeit (Fade)** (`transition_probe.py`, 2026-08-09) → nichts. Die
-  Lampe schaltet nicht, sie fährt hoch; das kostet die spürbare Wartezeit,
-  während die Schaltkette davor nur ~170 ms braucht. Sie *kennt* Übergänge
-  nachweislich — die SET-Quittung `[present, target, remaining]` meldet
-  `remaining=0x41`, also 1 s. Aber die optionalen Felder Transition Time und
-  Delay im Generic OnOff Set ändern daran nichts: mit `0x00` (sofort) und
-  `0x03` (0,3 s) bleibt `remaining` bei `0x41`. Quittiert, ignoriert — wie
-  Lightness/CTL/Level. **Der Fade ist per Mesh nicht abstellbar.**
-- **Remote sniffen** (`sniff_mesh.py`): sie broadcastet nicht — sie ist ein
-  **Proxy-Client im Werksnetz** (andere Network-ID) und verbindet sich per GATT.
-  **Impersonation** (`imp_lamp.py`/`imp_capture.sh`, Pi als Fake-Lampe mit
-  gespoofter MAC): technisch möglich, aber die Remote sendet nur **werks-key-
-  verschlüsselte** Bytes → unlesbar. **Werks-NetKey erraten** gegen die bekannte
-  Network-ID (`netid_crack.py`, `k3`) → kein Default trifft, Key ist zufällig.
-- **Online-Recherche**: kein Community-RE (Produkt neu, Juni 2026), keine FCC-Doku.
+- **Decoded the Composition Data** (`read_composition.py`) → in the process
+  found a real **bug in the stack**: `_app_nonce` wasn't setting the **ASZMIC
+  bit**, so segmented messages (SZMIC=1) couldn't be decrypted (now fixed).
+  Result: the node is `CID 0x0211` (Telink) with **2 vendor models**
+  (`0x0211/0x0000`, `/0x0001`) alongside the SIG models.
+- **Bound + tested all SIG models** (`model_probe.py`, `scene_probe.py`):
+  Level, Lightness, CTL, CTL temperature, HSL, Hue, Saturation, **8 stored
+  scenes via Scene Recall** — all respond with a status, **none moves the LED**.
+- **Fuzzed all 64 vendor opcodes** `0xC0–0xFF` (`vendor_sweep.py`,
+  `final_probe.py`), incl. `VD_RC_KEY_REPORT` (0xC0) with key codes and
+  structured payloads → nothing.
+- **On/off path** in all variants (byte as mode selector, repeated press,
+  transition bytes) → nothing. **`0xFDA0` service** read *and* written → nothing.
+- **Transition time (fade)** (`transition_probe.py`, 2026-08-09) → nothing. The
+  lamp doesn't switch, it ramps up; that costs the noticeable wait, whereas the
+  switching chain before it only needs ~170 ms. It *demonstrably knows*
+  transitions — the SET acknowledgment `[present, target, remaining]` reports
+  `remaining=0x41`, i.e. 1 s. But the optional Transition Time and Delay fields
+  in the Generic OnOff Set change nothing: with `0x00` (immediate) and `0x03`
+  (0.3 s), `remaining` stays at `0x41`. Acknowledged, ignored — just like
+  Lightness/CTL/Level. **The fade cannot be turned off via mesh.**
+- **Sniffing the remote** (`sniff_mesh.py`): it doesn't broadcast — it's a
+  **proxy client on the factory network** (different Network ID) and connects
+  via GATT. **Impersonation** (`imp_lamp.py`/`imp_capture.sh`, Pi as a fake lamp
+  with a spoofed MAC): technically possible, but the remote sends only
+  **factory-key-encrypted** bytes → unreadable. **Guessing the factory NetKey**
+  against the known Network ID (`netid_crack.py`, `k3`) → no default matches, the
+  key is random.
+- **Online research**: no community RE (product is new, June 2026), no FCC docs.
 
-**Fazit:** Die Firmware treibt Helligkeit/Farbe/Modes **ausschließlich** über das
-Telink-Vendor-Modell an, dessen Opcode+Payload nur im Chip steht. Software-seitig
-ist alles ausgereizt. Einziger verbleibender Weg: **Firmware-Dump der Lampe**
-(Telink TLSR, SWS-Debug-Interface) → liefert Vendor-Opcode, Payload-Format *und*
-die Keys im Klartext; danach ginge die Steuerung über den bestehenden Stack.
+**Conclusion:** the firmware drives brightness/color/modes **exclusively** via
+the Telink vendor model, whose opcode+payload lives only in the chip. On the
+software side, everything is exhausted. The only remaining path: a **firmware
+dump of the lamp** (Telink TLSR, SWS debug interface) → yields the vendor opcode,
+the payload format, *and* the keys in cleartext; after that, control would go
+through the existing stack.
 
-**Nachtrag: SDK identifiziert + beide dokumentierten Vendor-Wege sauber
-ausgeschlossen.** Ein zweiter, gründlicherer Anlauf hat das Fazit von „vermutlich"
-auf **rigoros bewiesen** gehoben:
+**Addendum: SDK identified + both documented vendor paths cleanly ruled out.** A
+second, more thorough attempt raised the conclusion from "probably" to
+**rigorously proven**:
 
-- **SDK-Zuordnung.** Die Lampe basiert auf dem Telink-SIG-Mesh-SDK
+- **SDK attribution.** The lamp is based on the Telink SIG Mesh SDK
   ([`Ai-Thinker-Open/Telink_SIG_Mesh`](https://github.com/Ai-Thinker-Open/Telink_SIG_Mesh),
-  Beispiel `RGBCW_Ali_Mesh`, `mesh/vendor_model.{c,h}`). Die zwei Vendor-Modelle
-  der Lampe sind dort `VENDOR_MD_LIGHT_S = 0x0000` und `VENDOR_MD_LIGHT_C = 0x0001`
-  — deckungsgleich. Damit kennen wir die **echten** Opcode-/Payload-Formate:
-  - **Attribut-Modus** (`VENDOR_OP_MODE_SPIRIT`): `0xD0` GET · `0xD1` SET ·
-    `0xD3` STATUS, Payload `[tid][attr_type 2B LE][value]`. IDs u. a.
+  example `RGBCW_Ali_Mesh`, `mesh/vendor_model.{c,h}`). The lamp's two vendor
+  models are `VENDOR_MD_LIGHT_S = 0x0000` and `VENDOR_MD_LIGHT_C = 0x0001` there
+  — an exact match. So we know the **real** opcode/payload formats:
+  - **Attribute mode** (`VENDOR_OP_MODE_SPIRIT`): `0xD0` GET · `0xD1` SET ·
+    `0xD3` STATUS, payload `[tid][attr_type 2B LE][value]`. IDs include
     `ATTR_ONOFF=0x0100`, `ATTR_TARGET_TEMP=0x010c`, `ATTR_SCENE_MODE=0xf004`.
-  - **Default-Modus** (`VENDOR_OP_MODE_DEFAULT`): `VD_RC_KEY_REPORT=0xC0`,
-    Payload `[code][00×7]` (8 Byte, aus `vd_cmd_key_report`); Antwort
-    `STATUS_NONE` (nie eine Bestätigung, nur die LED zeigt Wirkung).
-- **Beide Wege korrekt bedient → beide tot** (`vendor_attr2.py`,
-  `vendor_rc_sweep.py`): `ATTR_GET` über alle Kandidat-IDs mit *korrekter*
-  Struktur → **keine `0xD3`-Antwort** (Attribut-Modus nicht aktiv). Alle **256**
-  Key-Codes `0x00–0xFF` mit *korrekter* 8-Byte-Payload → **keine LED-Reaktion**.
-  (Die frühere Runde hatte den `tid` weggelassen bzw. nur 1–2 Byte gesendet — die
-  Payloads waren malformed, das erklärte die Funkstille *nicht* vollständig; jetzt
-  mit SDK-Struktur bestätigt: der Weg ist wirklich tot.)
-- **Passiver Voll-Mitschnitt** (`mesh_monitor.py`, ungefiltert, während On/Off-
-  Toggle): Die Lampe emittiert **nur `Generic OnOff Status` (0x8204)** — keine
-  Vendor-Publikation, kein Heartbeat, kein undekodierbarer Verkehr. Es gibt also
-  auch nichts passiv abzugreifen.
-- **Composition frisch gelesen:** **genau ein Element** (Element 0), 22 SIG- +
-  2 Vendor-Modelle — kein verstecktes zweites Element, an dem wir vorbeigefunkt
-  hätten.
-- **Remote nicht re-provisionierbar** (`scan_all.py`): Breit-Scan zeigt **kein**
-  `0x1827`-Advertisement, auch nicht bei Tastendruck → die Werks-Fernbedienung
-  lässt sich nicht in unser Netz aufnehmen, um ihre Mode-Kommandos dekodierbar
-  mitzuschneiden.
+  - **Default mode** (`VENDOR_OP_MODE_DEFAULT`): `VD_RC_KEY_REPORT=0xC0`,
+    payload `[code][00×7]` (8 bytes, from `vd_cmd_key_report`); response
+    `STATUS_NONE` (never an acknowledgment, only the LED shows an effect).
+- **Served both paths correctly → both dead** (`vendor_attr2.py`,
+  `vendor_rc_sweep.py`): `ATTR_GET` across all candidate IDs with the *correct*
+  structure → **no `0xD3` response** (attribute mode not active). All **256** key
+  codes `0x00–0xFF` with the *correct* 8-byte payload → **no LED reaction**. (The
+  earlier round had omitted the `tid` or sent only 1–2 bytes — the payloads were
+  malformed, which did *not* fully explain the radio silence; now confirmed with
+  the SDK structure: the path is genuinely dead.)
+- **Passive full capture** (`mesh_monitor.py`, unfiltered, during on/off
+  toggling): the lamp emits **only `Generic OnOff Status` (0x8204)** — no vendor
+  publication, no heartbeat, no undecodable traffic. So there's nothing to
+  passively grab either.
+- **Composition freshly read:** **exactly one element** (element 0), 22 SIG + 2
+  vendor models — no hidden second element we might have been transmitting past.
+- **Remote not re-provisionable** (`scan_all.py`): a broad scan shows **no**
+  `0x1827` advertisement, not even on a button press → the factory remote can't
+  be taken into our network to capture its mode commands decodably.
 
-**Verschärftes Fazit:** Das Telink-Gerüst ist da, aber **Philips hat die Vendor-
-Command-Tabelle durch eigene, proprietäre Opcodes/Payloads ersetzt** — weder der
-Attribut- noch der Key-Report-Weg des Standard-SDK wirkt. Was on-the-wire die
-Modes treibt, steht ausschließlich im Chip. Der Firmware-Dump bleibt der einzige
-Ground-Truth-Weg; bewusst **nicht** verfolgt (kein physischer Zugriff auf die
-Lampe, Read-Protection-Risiko).
+**Sharpened conclusion:** the Telink scaffold is there, but **Philips replaced
+the vendor command table with its own proprietary opcodes/payloads** — neither
+the attribute nor the key-report path of the standard SDK has any effect. What
+drives the modes on the wire lives only in the chip. The firmware dump remains
+the only ground-truth path; deliberately **not** pursued (no physical access to
+the lamp, read-protection risk).
 
-**Nachtrag 2: Die Remote als Angriffsfläche (Provisionee-Weg) — erschöpfend
-durchgespielt, an der Pi-Hardware gescheitert.** Idee: Wenn die Remote *uns*
-provisioniert, bekommen wir als Provisionee den **Werks-NetKey** im Klartext
-(ECDH), und damit ließen sich ihre Mode-Kommandos dekodieren/nachspielen.
+**Addendum 2: The remote as an attack surface (provisionee path) —
+exhaustively worked through, failed on the Pi hardware.** Idea: if the remote
+provisions *us*, we get the **factory NetKey** in cleartext (ECDH) as the
+provisionee, and with it we could decode/replay its mode commands.
 
-- **Die Remote *ist* ein Provisioner.** Nach einem Mesh-`Config Node Reset`
-  ([`node_reset.py`](research/node_reset.py)) wird die Lampe unprovisioniert und
-  von der Remote **sofort** wieder ins Werksnetz aufgenommen. (Das frühere
-  „nicht re-provisionierbar" galt nur für unseren *Fake*, nicht für den
-  Mechanismus.) Lampe↔Netz ist ein **Entweder-oder**: unser Netz *xor*
-  Werksnetz — beides gleichzeitig geht nicht.
-- **Die Remote ist ein TI-CC2640** (Hersteller *Shenzhen Jingxun*, ARM) und
-  exponiert den **TI-OAD-Firmware-Update-Service** (`f000ffc0`/`ffc1`/`ffc2`,
+- **The remote *is* a provisioner.** After a mesh `Config Node Reset`
+  ([`node_reset.py`](research/node_reset.py)) the lamp becomes unprovisioned and
+  is **immediately** taken back into the factory network by the remote. (The
+  earlier "not re-provisionable" only applied to our *fake*, not to the
+  mechanism.) Lamp↔network is an **either-or**: our network *xor* the factory
+  network — both at once is impossible.
+- **The remote is a TI CC2640** (manufacturer *Shenzhen Jingxun*, ARM) and
+  exposes the **TI OAD firmware-update service** (`f000ffc0`/`ffc1`/`ffc2`,
   [`remote_probe.py`](research/remote_probe.py), [`remote_ffc0.py`](research/remote_ffc0.py)).
-  Ein Read auf `ffc1` leakte einmalig **ARM-Maschinencode** aus einem
-  uninitialisierten OAD-Puffer (Beweis: dort liegt Firmware) — reproduzierbar
-  ist aber nur ein **fester** Wert, kein Speicherfenster. OAD ist ein *Schreib*-
-  Kanal (signierte Images) → **kein** kostenloser Firmware-Read, und Schreiben
-  riskiert einen Brick. Kein gangbarer No-Solder-Dump.
-- **Voller Provisionee-Angriff** ([`imp_prov.py`](research/imp_prov.py),
-  [`imp_capture_prov.sh`](research/imp_capture_prov.sh)): Pi mimt die
-  zurückgesetzte Lampe **byte-genau** — MAC gespooft + Device-UUID aus dem
-  Telink-Muster (`<Prefix><reversed MAC><Suffix>`, aus der Adapter-MAC
-  abgeleitet) + korrektes `0x1827`-Advertising via `btmgmt`. Ergebnis: Die
-  Remote **initiiert kein Provisioning** zu uns — unter *keinem* Bearer:
-  - **PB-GATT** sauber ausgeschlossen (verbindbares, byte-verifiziertes Adv, die
-    Remote verbindet sich trotzdem nicht).
-  - **PB-ADV** ([`pbadv_probe.sh`](research/pbadv_probe.sh), rohes HCI, weil
-    BlueZ die Custom-Mesh-AD-Typen `0x2B`/`0x29` sonst blockt): Die Remote
-    broadcastet nur ihren Proxy + Secure Network Beacon, **keine** PB-ADV-
-    Antwort. PB-ADV verlangt *gleichzeitiges* enges Senden **und** Empfangen im
-    µs-Takt — das gibt der Broadcom-Funk im Pi + BlueZ nicht zuverlässig her.
-- **Proxy-Mitlesen** ([`remote_listen.py`](research/remote_listen.py)): Wir
-  *können* uns mit der Remote (Proxy-Server) verbinden und `2ade` abonnieren —
-  aber ohne Werks-NetKey lässt sich kein Proxy-Filter setzen, es kommen nur
-  **Secure Network Beacons** (Werks-Network-ID), kein Mode-Traffic.
+  A read on `ffc1` once leaked **ARM machine code** from an uninitialized OAD
+  buffer (proof: firmware lives there) — but only a **fixed** value is
+  reproducible, not a memory window. OAD is a *write* channel (signed images) →
+  **no** free firmware read, and writing risks a brick. No viable no-solder dump.
+- **Full provisionee attack** ([`imp_prov.py`](research/imp_prov.py),
+  [`imp_capture_prov.sh`](research/imp_capture_prov.sh)): the Pi mimics the
+  reset lamp **byte-for-byte** — spoofed MAC + device UUID from the Telink
+  pattern (`<prefix><reversed MAC><suffix>`, derived from the adapter MAC) +
+  correct `0x1827` advertising via `btmgmt`. Result: the remote **does not
+  initiate provisioning** toward us — under *no* bearer:
+  - **PB-GATT** cleanly ruled out (connectable, byte-verified adv, the remote
+    still doesn't connect).
+  - **PB-ADV** ([`pbadv_probe.sh`](research/pbadv_probe.sh), raw HCI, because
+    BlueZ otherwise blocks the custom mesh AD types `0x2B`/`0x29`): the remote
+    broadcasts only its proxy + Secure Network Beacon, **no** PB-ADV response.
+    PB-ADV requires *simultaneous* tight transmitting **and** receiving at µs
+    cadence — which the Broadcom radio in the Pi + BlueZ doesn't reliably
+    deliver.
+- **Proxy eavesdropping** ([`remote_listen.py`](research/remote_listen.py)): we
+  *can* connect to the remote (proxy server) and subscribe to `2ade` — but
+  without the factory NetKey no proxy filter can be set, so only **Secure
+  Network Beacons** (factory Network ID) come in, no mode traffic.
 
-**Offene Frage:** Ob wirklich die *Remote* provisioniert — oder ein **Hub/Gateway**
-(CG-KIT) im Setup. Unverifiziert.
+**Open question:** whether it's really the *remote* that provisions — or a
+**hub/gateway** (CG-KIT) in the setup. Unverified.
 
-**Endgültiges Fazit:** Auf dem Pi ist der Provisionee-Weg ausgereizt (PB-GATT
-ausgeschlossen, PB-ADV hardwareseitig nicht machbar). Weiterkommen bräuchte
-entweder den **Firmware-Dump** (SWS) oder einen **dedizierten nRF52840** (echtes
-PB-ADV/Sniffing). Die Modes bleiben in proprietärer, signierter Firmware +
-zufälligem Werks-Key — nicht software-seitig vom Pi aus lösbar.
+**Final conclusion:** on the Pi, the provisionee path is exhausted (PB-GATT ruled
+out, PB-ADV not feasible on the hardware). Making progress would require either
+the **firmware dump** (SWS) or a **dedicated nRF52840** (real PB-ADV/sniffing).
+The modes remain in proprietary, signed firmware + a random factory key — not
+solvable in software from the Pi.
 
-### Diagnose-/Research-Tools
+### Diagnostic/research tools
 
-Das gesamte Analyse-Werkzeug aus dieser Jagd liegt in **[`research/`](research/)**
-(Composition-Reader, Modell-/Vendor-Prober, GATT-Enumeration, Adv-Sniffer,
-NetKey-Tests, Fake-Lampe). Geräte-IDs kommen zur Laufzeit aus Config/Adapter,
-nichts ist hardcodiert. Für den Normalbetrieb nicht nötig — Details +
-Ausführhinweise: [`research/README.md`](research/README.md).
+The entire analysis toolkit from this hunt lives in
+**[`research/`](research/)** (composition reader, model/vendor probers, GATT
+enumeration, adv sniffer, NetKey tests, fake lamp). Device IDs come from
+config/adapter at runtime, nothing is hardcoded. Not needed for normal
+operation — details + how to run: [`research/README.md`](research/README.md).

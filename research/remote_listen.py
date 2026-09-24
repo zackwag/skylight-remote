@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """
-Proxy-Listener: Pi verbindet sich als GATT-Client mit der Remote (Proxy-Server
-0x1828), abonniert Proxy-Data-Out (2ade) und loggt ALLES, was die Remote beim
-Tastendruck emittiert.
+Proxy listener: the Pi connects as a GATT client to the remote (proxy server
+0x1828), subscribes to Proxy Data Out (2ade), and logs EVERYTHING the remote
+emits on a button press.
 
-Sicher: nur Notifications aktivieren (CCCD-Write) + lauschen. KEINE OAD-/
-Firmware-Writes.
+Safe: only enable notifications (CCCD write) + listen. NO OAD/firmware writes.
 
-Vorbehalt: Traffic ist mit dem Werks-NetKey verschluesselt -> wir sehen roh
-(Chiffretext). Aber wir sehen, OB und WAS die Remote pro Tastendruck sendet
-(Groesse/Timing), und ob evtl. unverschluesselte Beacons/Proxy-Config dabei
-sind. Ein Decode-Versuch mit UNSEREM NetKey laeuft mit (wird i.d.R. scheitern).
+Caveat: the traffic is encrypted with the factory NetKey -> we see it raw
+(ciphertext). But we see WHETHER and WHAT the remote sends per button press
+(size/timing), and whether any unencrypted beacons/proxy config are in there. A
+decode attempt with OUR NetKey runs along (will usually fail).
 
-Remote muss wach sein -> Taste GEDRUECKT HALTEN, dann Modes durchdruecken.
+The remote must be awake -> HOLD DOWN a button, then press through the modes.
 
     sudo systemctl stop skylight-bridge
-    python3 research/remote_listen.py [MAC] [dauer_s]
+    python3 research/remote_listen.py [MAC] [duration_s]
     sudo systemctl start skylight-bridge
 """
 
@@ -33,7 +32,7 @@ from meshlib.skylight import CONFIG_FILE        # noqa: E402
 from meshlib.state import load_cfg              # noqa: E402
 
 MAC = sys.argv[1] if len(sys.argv) > 1 else sys.exit(
-    "Usage: remote_listen.py <REMOTE_MAC> [dauer_s]  (MAC via scan_all.py finden)")
+    "Usage: remote_listen.py <REMOTE_MAC> [duration_s]  (find MAC via scan_all.py)")
 DUR = float(sys.argv[2]) if len(sys.argv) > 2 else 30.0
 
 PROXY_OUT = "00002ade-0000-1000-8000-00805f9b34fb"   # notify
@@ -68,18 +67,18 @@ async def listen(dev, ctx):
         b = bytes(data)
         ptype = b[0] & 0x3F if b else -1
         line = f"[{stamp()}] 2ade <- {b.hex()} (proxytype=0x{ptype:02x})"
-        # Decode-Versuch mit UNSEREM NetKey (Werksnetz -> erwartet: None)
+        # decode attempt with OUR NetKey (factory network -> expected: None)
         if ptype == 0x00 and len(b) > 1:
             dec = network.decode_network_pdu(ctx, b[1:])
-            line += "  decode(unsere Keys)=" + (
-                "MOEGLICH!" if dec else "nein (fremdes Netz)")
+            line += "  decode(our keys)=" + (
+                "POSSIBLE!" if dec else "no (foreign network)")
         print(line, flush=True)
         rx.append(b)
 
     async with BleakClient(dev, timeout=20) as c:
-        print(f"# verbunden: {c.is_connected}. Abonniere 2ade ...", flush=True)
+        print(f"# connected: {c.is_connected}. Subscribing to 2ade ...", flush=True)
         await c.start_notify(PROXY_OUT, on_note)
-        print(f"# Lausche {DUR:.0f}s - JETZT Modes an der Remote durchdruecken!",
+        print(f"# Listening {DUR:.0f}s - NOW press through the modes on the remote!",
               flush=True)
         await asyncio.sleep(DUR)
         try:
@@ -93,22 +92,22 @@ async def main():
     cfg = load_cfg(CONFIG_FILE)
     ctx = network.NetContext(bytes.fromhex(cfg["net_key"]), cfg["iv_index"])
 
-    print(f"# Suche Remote {MAC} - Taste HALTEN ...", flush=True)
+    print(f"# Searching for remote {MAC} - HOLD A BUTTON ...", flush=True)
     for _ in range(6):
         dev = await find(8.0)
         if dev:
             try:
                 rx = await listen(dev, ctx)
-                print(f"\n# === {len(rx)} Notification(s) von der Remote ===",
+                print(f"\n# === {len(rx)} notification(s) from the remote ===",
                       flush=True)
                 if not rx:
-                    print("# Nichts gestreamt. Proxy leitet ohne gueltigen "
-                          "Filter evtl. nichts weiter.", flush=True)
+                    print("# Nothing streamed. Without a valid filter the proxy "
+                          "may not forward anything.", flush=True)
                 return
             except Exception as e:
-                print(f"# Fehler ({e}), retry ...", flush=True)
+                print(f"# error ({e}), retry ...", flush=True)
         await asyncio.sleep(0.5)
-    print("# Remote nicht erreicht. Taste gehalten? Naeher ran?", flush=True)
+    print("# Remote not reached. Was a button held? Move closer?", flush=True)
 
 
 if __name__ == "__main__":

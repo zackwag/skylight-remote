@@ -1,49 +1,49 @@
 #!/usr/bin/env python3
 """
-Schritt 1 - BLE-Sichtprüfung.
-Findet die Skylight (BLE-Name "BK_MESH_light") und zeigt RSSI + Advertisement.
+Step 1 - BLE visibility check.
+Finds the Skylight (BLE name "BK_MESH_light") and shows RSSI + advertisement.
 
-Zweck: bestätigen, dass der Raspberry Pi die Lampe über sein eigenes Bluetooth
-überhaupt sieht - bevor wir uns an den Mesh-Stack machen.
+Purpose: confirm that the Raspberry Pi can even see the lamp over its own
+Bluetooth - before we get into the mesh stack.
 
-Setup (auf dem Pi):
+Setup (on the Pi):
     sudo apt install -y python3-pip bluez
     pip3 install bleak
-Ausführen:
+Run:
     python3 scan.py
 """
 
 import asyncio
 from bleak import BleakScanner
 
-TARGET = "BK_MESH"           # Namensteil der Skylight
+TARGET = "BK_MESH"           # part of the Skylight name
 MESH_PROV_UUID = "1827"      # Mesh Provisioning Service
-MESH_PROXY_UUID = "1828"     # Mesh Proxy Service (nach Provisioning)
+MESH_PROXY_UUID = "1828"     # Mesh Proxy Service (after provisioning)
 
 
 async def main():
-    print("Scanne 15 s nach BLE-Geräten ... (Lampe sollte in Reichweite sein)\n")
+    print("Scanning 15 s for BLE devices ... (lamp should be in range)\n")
     found = await BleakScanner.discover(timeout=15.0, return_adv=True)
 
     hits = []
     for addr, (dev, adv) in found.items():
         name = dev.name or adv.local_name or ""
         is_target = TARGET in name if name else False
-        # auch anhand des Mesh-Service erkennen, falls kein Name kommt
+        # also detect via the mesh service in case no name comes through
         svc = [u.split("-")[0][-4:] for u in (adv.service_uuids or [])]
         is_mesh = any(u in (MESH_PROV_UUID, MESH_PROXY_UUID) for u in svc)
 
         if is_target or is_mesh:
-            hits.append((addr, name or "(kein Name)", adv.rssi, svc, adv.service_data))
+            hits.append((addr, name or "(no name)", adv.rssi, svc, adv.service_data))
 
     if not hits:
-        print("KEINE Mesh-Lampe gefunden.")
-        print("- Lampe eingeschaltet & in Reichweite?")
-        print("- Auf dem Pi Bluetooth aktiv? (bluetoothctl -> power on)")
-        print("- nRF Connect/andere App, die die Verbindung blockiert, schließen.")
+        print("NO mesh lamp found.")
+        print("- Lamp switched on & in range?")
+        print("- Bluetooth active on the Pi? (bluetoothctl -> power on)")
+        print("- Close nRF Connect/any other app that blocks the connection.")
         return
 
-    print("Gefunden:\n")
+    print("Found:\n")
     for addr, name, rssi, svc, sdata in hits:
         print(f"  {addr}   RSSI {rssi} dBm   name={name}")
         if svc:
@@ -52,7 +52,7 @@ async def main():
             print(f"    service_data {uuid.split('-')[0][-4:]}: {data.hex()}")
         print()
 
-    print("Wenn hier BK_MESH_light steht -> Pi sieht die Lampe. Weiter zu Schritt 2.")
+    print("If BK_MESH_light appears here -> the Pi sees the lamp. On to step 2.")
 
 
 if __name__ == "__main__":

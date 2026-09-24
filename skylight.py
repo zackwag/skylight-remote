@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Skylight-CLI - die Lampe steuern und diagnostizieren.
+"""Skylight CLI - control and diagnose the lamp.
 
-    python3 skylight.py on            # einschalten
-    python3 skylight.py off           # ausschalten
-    python3 skylight.py toggle        # umschalten
-    python3 skylight.py status        # aktuellen Zustand abfragen
-    python3 skylight.py scan          # BLE-Sicht + RSSI der Lampe
-    python3 skylight.py provision     # frisch ins Mesh aufnehmen (siehe provision.py)
+    python3 skylight.py on            # turn on
+    python3 skylight.py off           # turn off
+    python3 skylight.py toggle        # toggle
+    python3 skylight.py status        # query current state
+    python3 skylight.py scan          # BLE visibility + RSSI of the lamp
+    python3 skylight.py provision     # freshly take into the mesh (see provision.py)
 
-Hinweis: An der Skylight wirkt nur an/aus zuverlaessig. Helligkeit, Weisston
-und die Modi laufen ueber ein proprietaeres Protokoll der Fernbedienung und
-sind nicht ansteuerbar (siehe README).
+Note: on the Skylight, only on/off works reliably. Brightness, white tone and
+the modes run over the remote's proprietary protocol and cannot be controlled
+(see README).
 """
 
 import asyncio
@@ -31,27 +31,27 @@ async def cmd_power(target):
         if target == "toggle":
             target = not await sky.get_power()
         state = await sky.set_power(target)
-        print(f"Lampe ist jetzt: {'AN' if state else 'AUS'}")
+        print(f"Lamp is now: {'ON' if state else 'OFF'}")
 
 
 async def cmd_status():
     async with SkylightClient(log=log) as sky:
-        print(f"Lampe ist: {'AN' if await sky.get_power() else 'AUS'}")
+        print(f"Lamp is: {'ON' if await sky.get_power() else 'OFF'}")
 
 
 async def cmd_scan():
     cfg = load_cfg(CONFIG_FILE)
     mac = cfg["mac"].upper()
-    print(f"Suche Lampe {mac} (8 s) ...")
+    print(f"Searching for lamp {mac} (8 s) ...")
     devs = await BleakScanner.discover(timeout=8.0, return_adv=True)
     for addr, (d, adv) in devs.items():
         if addr.upper() == mac:
-            q = ("sehr gut" if adv.rssi > -65 else "gut" if adv.rssi > -75
-                 else "grenzwertig" if adv.rssi > -85 else "schwach")
+            q = ("very good" if adv.rssi > -65 else "good" if adv.rssi > -75
+                 else "marginal" if adv.rssi > -85 else "weak")
             svc = [u[4:8] for u in (adv.service_data or {})]
-            print(f"  gefunden: RSSI {adv.rssi} dBm ({q}), Services {svc}")
+            print(f"  found: RSSI {adv.rssi} dBm ({q}), services {svc}")
             return
-    print("  NICHT gefunden - Lampe an & in Reichweite?")
+    print("  NOT found - lamp on & in range?")
 
 
 def main():

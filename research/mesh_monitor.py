@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Passiver Mesh-Mitschnitt - zeigt ALLES, was die Lampe im Netz emittiert.
+Passive mesh capture - shows EVERYTHING the lamp emits on the network.
 
-Motivation: alle bisherigen Probes lauschen nur kurz nach einem eigenen Send
-und filtern hart `if ctl or src != lamp`. Das verwirft (a) Control-Messages
-(Heartbeats) und (b) alles, was NICHT von der primaeren Unicast-Adresse kommt.
-Das Vendor-Modell sitzt aber auf Element-Adresse 0x0002 -- eine Status-
-Publikation von dort waere nie sichtbar geworden.
+Motivation: all previous probes only listen briefly after one of our own sends
+and hard-filter `if ctl or src != lamp`. That discards (a) control messages
+(heartbeats) and (b) everything that does NOT come from the primary unicast
+address. But the vendor model sits on element address 0x0002 -- a status
+publication from there would never have been visible.
 
-Dieses Tool zieht JEDE netzentschluesselbare PDU aus dem Proxy (egal src/dst/
-ctl), versucht Access-Decrypt mit app- UND dev-key (unsegmentiert + segmentiert,
-inkl. ASZMIC) und loggt sonst Roh-Hex. Optional wird waehrenddessen On/Off
-getoggelt, um eine zustandsgebundene Publikation zu provozieren.
+This tool pulls EVERY network-decryptable PDU out of the proxy (regardless of
+src/dst/ctl), tries access-decrypt with the app AND dev key (unsegmented +
+segmented, incl. ASZMIC) and otherwise logs raw hex. Optionally it toggles
+On/Off in the meantime to provoke a state-bound publication.
 
     sudo systemctl stop skylight-bridge
-    python3 research/mesh_monitor.py 45           # 45s rein passiv
-    python3 research/mesh_monitor.py 60 toggle    # 60s + On/Off-Provokation
+    python3 research/mesh_monitor.py 45           # 45s purely passive
+    python3 research/mesh_monitor.py 60 toggle    # 60s + On/Off provocation
     sudo systemctl start skylight-bridge
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -43,14 +43,14 @@ def name_ctrl(op):
 
 
 async def toggler(proxy, cfg, app, lamp, stop):
-    """Toggelt On/Off im Takt, um eine Publikation zu provozieren."""
+    """Toggles On/Off at intervals to provoke a publication."""
     on = True
     while not stop.is_set():
         cfg["tid"] = (cfg["tid"] + 1) & 0xFF
-        wire = 0x00 if on else 0x01          # Firmware-Quirk: invertiert
+        wire = 0x00 if on else 0x01          # firmware quirk: inverted
         await proxy.send_access(cfg, app, True, lamp, OP_ONOFF_SET,
                                 bytes([wire, cfg["tid"]]))
-        print(f"    (toggle -> {'AN' if on else 'AUS'})", flush=True)
+        print(f"    (toggle -> {'ON' if on else 'OFF'})", flush=True)
         on = not on
         try:
             await asyncio.wait_for(stop.wait(), timeout=6.0)
@@ -69,7 +69,7 @@ async def main():
     lamp, iv, mysrc = cfg["unicast"], cfg["iv_index"], cfg["src"]
     keys = (("app", app, 0x01), ("dev", dev, 0x02))
 
-    # Segment-Reassembly-Puffer je Quelle
+    # segment reassembly buffer per source
     segs = {}
 
     n_total = n_ctrl = n_lamp = n_undec = 0
@@ -81,9 +81,9 @@ async def main():
         tog = asyncio.create_task(toggler(proxy, cfg, app, lamp, stop)) \
             if do_toggle else None
 
-        print(f"=== Mitschnitt {dur:.0f}s "
-              f"({'mit On/Off-Toggle' if do_toggle else 'rein passiv'}) - "
-              f"mein src=0x{mysrc:04x}, Lampe unicast=0x{lamp:04x} ===",
+        print(f"=== Capture {dur:.0f}s "
+              f"({'with On/Off toggle' if do_toggle else 'purely passive'}) - "
+              f"my src=0x{mysrc:04x}, lamp unicast=0x{lamp:04x} ===",
               flush=True)
 
         while True:
@@ -98,7 +98,7 @@ async def main():
 
             n_total += 1
             ts = loop.time() - t0
-            mine = " (=ICH)" if src == mysrc else ""
+            mine = " (=ME)" if src == mysrc else ""
             head = f"[t~{ts:5.1f}] src=0x{src:04x}{mine} dst=0x{dst:04x} seq={seq}"
 
             if ctl:
@@ -107,24 +107,24 @@ async def main():
                       f"data={tr.hex()}", flush=True)
                 continue
 
-            if src == mysrc:                 # eigene Echo-Sends ignorieren
+            if src == mysrc:                 # ignore our own echo sends
                 continue
 
-            if not (tr[0] & 0x80):           # unsegmentierte Access-PDU
+            if not (tr[0] & 0x80):           # unsegmented access PDU
                 r = _try_decrypt(tr[1:], seq, src, dst, iv, 0, keys)
                 if r:
                     kname, (op, params) = r
                     n_lamp += 1
                     print(f"{head}  ACCESS [{kname}] op=0x{op:x} "
-                          f"params={params.hex()}  <== VON DER LAMPE",
+                          f"params={params.hex()}  <== FROM THE LAMP",
                           flush=True)
                 else:
                     n_undec += 1
-                    print(f"{head}  <nicht dekodierbar> raw={tr.hex()}",
+                    print(f"{head}  <not decodable> raw={tr.hex()}",
                           flush=True)
                 continue
 
-            # segmentierte Access-PDU -> reassemblieren
+            # segmented access PDU -> reassemble
             hdr = int.from_bytes(tr[1:4], "big")
             szmic = (hdr >> 23) & 1
             seq_zero = (hdr >> 10) & 0x1FFF
@@ -140,26 +140,26 @@ async def main():
                     kname, (op, params) = r
                     n_lamp += 1
                     print(f"{head}  SEG-ACCESS [{kname}] op=0x{op:x} "
-                          f"params={params.hex()}  <== VON DER LAMPE",
+                          f"params={params.hex()}  <== FROM THE LAMP",
                           flush=True)
                 else:
                     n_undec += 1
-                    print(f"{head}  SEG <nicht dekodierbar> "
+                    print(f"{head}  SEG <not decodable> "
                           f"cipher={cipher.hex()}", flush=True)
 
         if tog:
             stop.set()
             await tog
-        save_cfg(CONFIG_FILE, cfg)           # seq persistieren!
+        save_cfg(CONFIG_FILE, cfg)           # persist seq!
 
-    print(f"\n=== FAZIT: {n_total} PDU(s) gesamt | {n_ctrl} Control | "
-          f"{n_lamp} dekodierte Lampen-Access | {n_undec} undekodierbar ===")
+    print(f"\n=== CONCLUSION: {n_total} PDU(s) total | {n_ctrl} control | "
+          f"{n_lamp} decoded lamp access | {n_undec} undecodable ===")
     if n_lamp == 0 and n_undec == 0 and n_ctrl == 0:
-        print("Die Lampe emittiert von sich aus NICHTS im Netz "
-              "(keine Publikation, kein Heartbeat) -> publish-only-Hoffnung tot.")
+        print("The lamp emits NOTHING on the network on its own "
+              "(no publication, no heartbeat) -> the publish-only hope is dead.")
     elif n_undec:
-        print("Es gibt undekodierbaren Verkehr -> evtl. anderer Key/Netz. "
-              "Roh-Hex oben analysieren.")
+        print("There is undecodable traffic -> possibly a different key/network. "
+              "Analyze the raw hex above.")
 
 
 if __name__ == "__main__":

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Vendor-Modell-Probe: app_key an das Telink-Vendor-Modell binden und
-Vendor-Opcodes (Company 0x0211) senden + Antworten dekodieren.
+Vendor model probe: bind app_key to the Telink vendor model and send
+vendor opcodes (Company 0x0211) + decode responses.
 
-Ziel: den Helligkeits-/Farbkanal finden. Aus Telinks offenem SDK:
-  0xC0 VD_RC_KEY_REPORT      (Remote meldet Tastendruck)
-  0xC1..0xC4 VD_GROUP_G_*    (Group get/set/status)
-  0xD0..0xD5 VD_MSG_ATTR_*   (Attribut get/set/status)
+Goal: find the brightness/color channel. From Telink's open SDK:
+  0xC0 VD_RC_KEY_REPORT      (remote reports a button press)
+  0xC1..0xC4 VD_GROUP_G_*    (group get/set/status)
+  0xD0..0xD5 VD_MSG_ATTR_*   (attribute get/set/status)
 
-Dieser Lauf: BIND + eine Batterie GET-artiger Opcodes. Antworten werden mit
-app_key UND dev_key, segmentiert wie unsegmentiert (inkl. ASZMIC) dekodiert.
-Aendert nichts an der Lampe ausser der (reversiblen) Model-Bindung.
+This run: BIND + a battery of GET-like opcodes. Responses are decoded with the
+app_key AND dev_key, segmented and unsegmented (incl. ASZMIC).
+Changes nothing on the lamp except the (reversible) model binding.
 
-WICHTIG: Bridge vorher stoppen.
+IMPORTANT: stop the bridge first.
 
-    python3 vendor_probe.py bind      # nur binden
-    python3 vendor_probe.py probe     # binden + GET-Batterie (default)
-    python3 vendor_probe.py send C0 0100   # ein rohes Vendor-Kommando
+    python3 vendor_probe.py bind      # bind only
+    python3 vendor_probe.py probe     # bind + GET battery (default)
+    python3 vendor_probe.py send C0 0100   # a single raw vendor command
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -70,7 +70,7 @@ def _try_decrypt(cipher, seq, src, dst, iv, aszmic, keys):
 
 
 async def listen(proxy, lamp, iv, keys, seconds: float):
-    """Sammelt & dekodiert alle Access-Antworten der Lampe im Zeitfenster."""
+    """Collects & decodes all access responses from the lamp in the time window."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + seconds
     segs, seg_n, seq_auth, msrc, mdst, szmic = {}, None, None, None, None, 0
@@ -86,7 +86,7 @@ async def listen(proxy, lamp, iv, keys, seconds: float):
             return out
         if ctl or src != lamp:
             continue
-        if not (tr[0] & 0x80):                       # unsegmentiert
+        if not (tr[0] & 0x80):                       # unsegmented
             r = _try_decrypt(tr[1:], seq, src, dst, iv, 0, keys)
             out.append(("unseg", r))
             continue
@@ -105,11 +105,11 @@ async def listen(proxy, lamp, iv, keys, seconds: float):
 
 def fmt(results):
     if not results:
-        return "    (keine Antwort)"
+        return "    (no response)"
     lines = []
     for kind, r in results:
         if r is None:
-            lines.append(f"    [{kind}] <nicht dekodierbar>")
+            lines.append(f"    [{kind}] <not decodable>")
         else:
             kname, (opcode, params) = r
             lines.append(f"    [{kind}/{kname}] opcode=0x{opcode:x} "
@@ -129,10 +129,10 @@ async def do_bind(proxy, cfg, dev_key, lamp, iv, keys):
             hit = [r for _, r in res if r and r[1][0] == OP_MODEL_APP_STATUS]
             if hit:
                 st = hit[0][1][1]
-                print(f"  Status: {st.hex()}  ({'OK' if st and st[0] == 0 else 'FEHLER'})")
+                print(f"  Status: {st.hex()}  ({'OK' if st and st[0] == 0 else 'ERROR'})")
                 break
         else:
-            print("  keine Bind-Bestaetigung")
+            print("  no bind confirmation")
 
 
 async def send_vendor(proxy, cfg, app_key, lamp, iv, keys, op_byte, params,
@@ -143,7 +143,7 @@ async def send_vendor(proxy, cfg, app_key, lamp, iv, keys, op_byte, params,
 
 
 async def onoff(proxy, cfg, app_key, lamp, on: bool):
-    wire = 0x00 if on else 0x01                      # Firmware-Quirk: invertiert
+    wire = 0x00 if on else 0x01                      # firmware quirk: inverted
     cfg["tid"] = (cfg["tid"] + 1) & 0xFF
     await proxy.send_access(cfg, app_key, True, lamp, 0x8202,
                             bytes([wire, cfg["tid"]]))
@@ -169,7 +169,7 @@ async def main():
                               params, "SEND")
 
         elif mode == "probe":
-            print("\n--- GET-Batterie (aendert nichts, sucht Antworten) ---")
+            print("\n--- GET battery (changes nothing, looks for responses) ---")
             battery = [
                 (0xD0, b"", "ATTR_GET all"),
                 (0xD0, bytes.fromhex("0000"), "ATTR_GET attr0"),
@@ -182,11 +182,11 @@ async def main():
                 await send_vendor(proxy, cfg, app_key, lamp, iv, keys,
                                   op_byte, params, label)
                 await asyncio.sleep(0.5)
-            print("\nFertig. Alle nicht-leeren Antworten oben zeigen das "
-                  "Vendor-Antwortformat -> daraus bauen wir das Helligkeits-SET.")
+            print("\nDone. Any non-empty responses above show the vendor "
+                  "response format -> from that we build the brightness SET.")
 
         elif mode == "keys":
-            print("Lampe AN (fuer sichtbare Helligkeit) ...")
+            print("Lamp ON (for visible brightness) ...")
             await onoff(proxy, cfg, app_key, lamp, True)
             await asyncio.sleep(2)
             seq = [
@@ -197,13 +197,13 @@ async def main():
                 (0xD2, bytes.fromhex("0000ff"), "ATTR_SET attr0=0xff"),
                 (0xD2, bytes.fromhex("010064"), "ATTR_SET attr1=0x64"),
             ]
-            print(f"=== {len(seq)} Kommandos im ~5s-Takt - LAMPE BEOBACHTEN ===")
+            print(f"=== {len(seq)} commands at ~5s intervals - WATCH THE LAMP ===")
             for i, (op, p, label) in enumerate(seq, 1):
-                print(f"\n[{i}/{len(seq)}]  (jetzt schauen)")
+                print(f"\n[{i}/{len(seq)}]  (look now)")
                 await send_vendor(proxy, cfg, app_key, lamp, iv, keys, op, p, label)
                 await asyncio.sleep(3)
-            print("\nWelche Nummer hat die Lampe veraendert? (heller/dunkler/"
-                  "Farbe/aus/flackern)")
+            print("\nWhich number changed the lamp? (brighter/darker/"
+                  "color/off/flicker)")
     return 0
 
 

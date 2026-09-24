@@ -1,8 +1,8 @@
-"""Mesh Network-/Transport-/Access-Layer fuer die Proxy-Verbindung.
+"""Mesh network/transport/access layer for the proxy connection.
 
-Implementiert genau das, was skylight-cmd braucht: unsegmentierte und
-TX-segmentierte Access-Messages mit App- oder DevKey, RX-Dekodierung
-unsegmentierter Antworten (Status-Messages).
+Implements exactly what skylight-cmd needs: unsegmented and TX-segmented access
+messages with an app or dev key, and RX decoding of unsegmented responses
+(status messages).
 """
 
 from dataclasses import dataclass
@@ -26,10 +26,10 @@ def _net_nonce(ctl_ttl: int, seq: int, src: int, iv_index: int) -> bytes:
 
 def _app_nonce(nonce_type: int, seq: int, src: int, dst: int,
                iv_index: int, aszmic: int = 0) -> bytes:
-    # Byte 1 traegt das ASZMIC-Bit: bei SEGMENTIERTEN Access-Nachrichten mit
-    # SZMIC=1 (64-Bit TransMIC) muss es gesetzt sein, sonst schlaegt die
-    # CCM-(Ent)schluesselung fehl. Fuer unsegmentierte Nachrichten ist es 0.
-    # (Der Bug fiel beim Lesen der segmentierten Composition Data auf, siehe
+    # Byte 1 carries the ASZMIC bit: for SEGMENTED access messages with
+    # SZMIC=1 (64-bit TransMIC) it must be set, otherwise CCM
+    # (de)encryption fails. For unsegmented messages it is 0.
+    # (The bug surfaced when reading the segmented Composition Data, see
     # read_composition.py.)
     return (bytes([nonce_type, (aszmic & 1) << 7]) + seq.to_bytes(3, "big")
             + src.to_bytes(2, "big") + dst.to_bytes(2, "big")
@@ -52,7 +52,7 @@ def encode_network_pdu(ctx: NetContext, ctl: int, ttl: int, seq: int,
 
 
 def decode_network_pdu(ctx: NetContext, pdu: bytes):
-    """-> (ctl, ttl, seq, src, dst, transport_pdu) oder None (fremdes Netz)."""
+    """-> (ctl, ttl, seq, src, dst, transport_pdu) or None (foreign network)."""
     if pdu[0] & 0x7F != ctx.nid:
         return None
     pecb = crypto.aes_ecb(ctx.priv_key, bytes(5)
@@ -73,11 +73,11 @@ def decode_network_pdu(ctx: NetContext, pdu: bytes):
 
 
 def encode_access(opcode: int, params: bytes) -> bytes:
-    if opcode <= 0x7F:                       # 1-Byte-Opcode
+    if opcode <= 0x7F:                       # 1-byte opcode
         return bytes([opcode]) + params
-    if opcode <= 0xFFFF:                      # 2-Byte-Opcode (0x80..)
+    if opcode <= 0xFFFF:                      # 2-byte opcode (0x80..)
         return opcode.to_bytes(2, "big") + params
-    # 3-Byte Vendor-Opcode: [0b11xxxxxx][Company-ID little-endian]
+    # 3-byte vendor opcode: [0b11xxxxxx][company ID little-endian]
     op_byte = (opcode >> 16) & 0xFF
     company = opcode & 0xFFFF
     return bytes([op_byte]) + company.to_bytes(2, "little") + params
@@ -95,8 +95,8 @@ def parse_access(payload: bytes):
 def build_transport_pdus(ctx: NetContext, key: bytes, is_app_key: bool,
                          seq_start: int, src: int, dst: int,
                          access_pdu: bytes):
-    """Verschluesselt Access-PDU (App- oder DevKey) und baut Lower-Transport-
-    PDUs. -> Liste von Transport-PDUs (1 = unsegmentiert)."""
+    """Encrypts the access PDU (app or dev key) and builds lower transport
+    PDUs. -> list of transport PDUs (1 = unsegmented)."""
     aid = crypto.k4(key) if is_app_key else 0
     akf = 0x40 if is_app_key else 0x00
     nonce_type = 0x01 if is_app_key else 0x02
@@ -118,10 +118,10 @@ def build_transport_pdus(ctx: NetContext, key: bytes, is_app_key: bool,
 
 def decrypt_access(ctx: NetContext, key: bytes, is_app_key: bool, seq: int,
                    src: int, dst: int, transport: bytes):
-    """Entschluesselt eine unsegmentierte Access-Transport-PDU. -> Access-PDU
-    oder None."""
+    """Decrypts an unsegmented access transport PDU. -> access PDU
+    or None."""
     if transport[0] & 0x80:
-        return None                       # segmentierte RX: nicht benoetigt
+        return None                       # segmented RX: not needed
     nonce_type = 0x01 if is_app_key else 0x02
     nonce = _app_nonce(nonce_type, seq, src, dst, ctx.iv_index)
     try:

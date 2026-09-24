@@ -1,12 +1,12 @@
-"""Skylight-Client: kapselt die Mesh-Steuerung der Lampe an einer Stelle.
+"""Skylight client: encapsulates the lamp's mesh control in one place.
 
-Wird von der CLI (skylight.py) und der MQTT-Bridge (mqtt_bridge.py) genutzt.
+Used by the CLI (skylight.py) and the MQTT bridge (mqtt_bridge.py).
 
-Bewusst schlank: An der realen Lampe wirkt nur Generic OnOff (und das
-INVERTIERT). Lightness/CTL/Level/Szenen werden von der Firmware quittiert,
-aber ignoriert - die Modi laufen ausschliesslich ueber das proprietaere
-Telink-Vendor-Protokoll der Fernbedienung (nicht erreichbar). Details siehe
-README, Abschnitt "Was geht (und was nicht)".
+Deliberately lean: on the real lamp, only Generic OnOff has any effect (and that
+INVERTED). Lightness/CTL/Level/scenes are acknowledged by the firmware but
+ignored - the modes run exclusively over the remote's proprietary Telink vendor
+protocol (unreachable). Details: see the README, section "What works (and what
+doesn't)".
 """
 
 import os
@@ -22,91 +22,92 @@ OP_ONOFF_GET = 0x8201
 OP_ONOFF_SET = 0x8202
 OP_ONOFF_STATUS = 0x8204
 
-# BLE-Writes (ohne Response) und Mesh-Nachrichten koennen verloren gehen.
-# Statt beim ersten Ausbleiben die ganze Proxy-Verbindung fallenzulassen (und
-# HA/HomeKit auf einem veralteten "AN" sitzen zu lassen), senden wir die
-# Anfrage mehrfach mit kurzem Timeout erneut, bevor wir aufgeben.
-STATUS_TIMEOUT = 3.0   # Sekunden pro Versuch
-STATUS_ATTEMPTS = 3    # Sendungen, bis wir aufgeben
+# BLE writes (without response) and mesh messages can get lost. Instead of
+# dropping the whole proxy connection on the first miss (and leaving HA/HomeKit
+# stuck on a stale "ON"), we resend the request several times with a short
+# timeout before giving up.
+STATUS_TIMEOUT = 3.0   # seconds per attempt
+STATUS_ATTEMPTS = 3    # sends before we give up
 
-# Firmware-Quirk (am Geraet gemessen, Wahrheitstabelle: research/onoff_truth.py).
-# Die beiden Richtungen benutzen NICHT dieselbe Kodierung:
+# Firmware quirk (measured on the device, truth table: research/onoff_truth.py).
+# The two directions do NOT use the same encoding:
 #
-#   SET   Wire 0x00 schaltet AN, 0x01 schaltet AUS -- invertiert. Die
-#         Status-Antwort auf ein SET spiegelt nur das gesendete Wire-Byte
-#         zurueck (SET 0x00 -> [00 00 41]), ist also ebenfalls invertiert und
-#         sagt nichts ueber den tatsaechlichen Zustand aus.
-#   GET   Die Status-Antwort auf ein GET meldet den echten Zustand dagegen
-#         STANDARDKONFORM: 0x01 = an, 0x00 = aus.
+#   SET   Wire 0x00 turns it ON, 0x01 turns it OFF -- inverted. The status
+#         response to a SET merely echoes the sent wire byte back
+#         (SET 0x00 -> [00 00 41]), so it is also inverted and says nothing
+#         about the actual state.
+#   GET   The status response to a GET, on the other hand, reports the real
+#         state SPEC-COMPLIANTLY: 0x01 = on, 0x00 = off.
 #
-# Frueher wurde fuer beide Richtungen invertiert. Schalten funktionierte
-# dadurch, Lesen lieferte aber konsequent das Gegenteil -- Lampe aus, GET
-# liefert 0x00, invertiert -> HA zeigte "an".
+# Previously both directions were inverted. Switching worked that way, but
+# reading consistently returned the opposite -- lamp off, GET returns 0x00,
+# inverted -> HA showed "on".
 ONOFF_SET_INVERTED = True
 
-# Uebergangszeit (Fade). Ein Generic OnOff Set darf hinter OnOff und TID zwei
-# OPTIONALE Bytes fuehren: Transition Time und Delay. Ohne sie nimmt der Server
-# seine eigene Default Transition Time -- und die ist hier nicht 0: Die Lampe
-# quittiert ein SET mit [present, target, remaining] und meldet als remaining
-# 0x41, also "Aufloesung 1 s, 1 Schritt". Sie faehrt die Helligkeit hoch, statt
-# zu schalten. Am Helligkeitssensor im Bad gemessen (2026-08-09): nach dem
-# quittierten "an" stieg die Beleuchtungsstaerke ueber rund 3 s von 0 auf 65 lx.
+# Transition time (fade). A Generic OnOff Set may carry two OPTIONAL bytes after
+# OnOff and TID: Transition Time and Delay. Without them the server uses its own
+# Default Transition Time -- and here that is not 0: the lamp acknowledges a SET
+# with [present, target, remaining] and reports 0x41 as remaining, i.e.
+# "resolution 1 s, 1 step". It ramps the brightness up instead of switching.
+# Measured at the bathroom's light sensor (2026-08-09): after the acknowledged
+# "on", the illuminance rose from 0 to 65 lx over roughly 3 s.
 #
-# Genau das ist die Wartezeit, die als "die Lampe reagiert nicht sofort"
-# ankommt -- die Schaltkette davor braucht nur ~170 ms (Sensor -> Lampe quittiert).
+# That is exactly the delay that comes across as "the lamp doesn't respond
+# immediately" -- the switching chain before it only needs ~170 ms
+# (sensor -> lamp acknowledges).
 #
-# GEMESSEN 2026-08-09, research/transition_probe.py: Die Firmware IGNORIERT
-# das Feld. Mit Transition Time 0x00 (sofort) und 0x03 (0,3 s) meldet die
-# Quittung unveraendert remaining=0x41 -- dieselbe Sekunde wie ohne die Bytes.
-# Damit reiht sich der Fade bei Lightness/CTL/Level/Szenen ein: quittiert,
-# aber wirkungslos. Der Uebergang ist per Mesh nicht erreichbar.
+# MEASURED 2026-08-09, research/transition_probe.py: the firmware IGNORES the
+# field. With Transition Time 0x00 (immediate) and 0x03 (0.3 s), the
+# acknowledgment reports remaining=0x41 unchanged -- the same second as without
+# the bytes. So the fade lines up with Lightness/CTL/Level/scenes: acknowledged
+# but ineffective. The transition is not reachable via mesh.
 #
-# Default deshalb "default" = Felder weglassen, also byte-gleich zu vorher.
-# Der Schalter bleibt stehen, damit die Messung reproduzierbar ist und die
-# Sackgasse dokumentiert -- nicht, weil er etwas bewirkt.
+# Default is therefore "default" = omit the fields, i.e. byte-for-byte identical
+# to before. The switch stays in place so the measurement is reproducible and
+# the dead end is documented -- not because it has any effect.
 TRANSITION_MS = os.environ.get("SKYLIGHT_TRANSITION_MS", "default")
 
 
 def transition_wire(ms: int) -> int:
-    """Millisekunden -> Transition-Time-Byte (Mesh 3.1.3).
+    """Milliseconds -> Transition Time byte (Mesh 3.1.3).
 
-    Bits 5-0 Schrittzahl, Bits 7-6 Aufloesung (100 ms / 1 s / 10 s / 10 min).
-    0x00 = null Schritte = sofort, ohne Uebergang.
+    Bits 5-0 step count, bits 7-6 resolution (100 ms / 1 s / 10 s / 10 min).
+    0x00 = zero steps = immediate, no transition.
     """
     for res_bits, step_ms in ((0b00, 100), (0b01, 1000), (0b10, 10_000),
                               (0b11, 600_000)):
         steps = round(ms / step_ms)
         if steps <= 62:
             return (res_bits << 6) | steps
-    return 0b11 << 6 | 62  # laenger als 620 min geht nicht
+    return 0b11 << 6 | 62  # longer than 620 min is not possible
 
 
 def transition_params() -> bytes:
-    """Die beiden optionalen Bytes -- oder leer, wenn die Lampe entscheiden soll."""
+    """The two optional bytes -- or empty if the lamp should decide."""
     if TRANSITION_MS.strip().lower() in ("default", "none", ""):
         return b""
-    # Delay (Wartezeit VOR dem Uebergang) bleibt 0: Wir wollen frueher fertig
-    # sein, nicht spaeter anfangen.
+    # Delay (wait time BEFORE the transition) stays 0: we want to finish
+    # earlier, not to start later.
     return bytes([transition_wire(int(TRANSITION_MS)), 0x00])
 
 
 def onoff_wire(on: bool) -> int:
-    """Parameter-Byte fuer ein OnOff-SET."""
+    """Parameter byte for an OnOff SET."""
     return int(on ^ ONOFF_SET_INVERTED)
 
 
 def onoff_echo(wire: int) -> bool:
-    """Status-Antwort auf ein SET -- gespiegeltes Wire-Byte, also invertiert."""
+    """Status response to a SET -- echoed wire byte, i.e. inverted."""
     return bool(wire) ^ ONOFF_SET_INVERTED
 
 
 def onoff_phys(wire: int) -> bool:
-    """Status-Antwort auf ein GET -- echter Zustand, standardkonform."""
+    """Status response to a GET -- real state, spec-compliant."""
     return bool(wire)
 
 
 class SkylightClient:
-    """Async-Context-Manager fuer eine Steuerungssitzung mit der Lampe."""
+    """Async context manager for a control session with the lamp."""
 
     def __init__(self, cfg: dict | None = None, log=lambda *_: None):
         self.cfg = cfg or load_cfg(CONFIG_FILE)
@@ -116,7 +117,7 @@ class SkylightClient:
         self.dst = self.cfg["unicast"]
         self.log = log
         self._proxy = None
-        # Restlaufzeit des Uebergangs aus der letzten SET-Quittung (roh).
+        # Remaining transition time from the last SET acknowledgment (raw).
         self.last_remaining = None
 
     async def __aenter__(self):
@@ -137,15 +138,14 @@ class SkylightClient:
         return self.cfg["tid"]
 
     async def _request(self, opcode: int, params: bytes) -> bytes:
-        """Sendet eine OnOff-Nachricht und wartet robust auf den Status.
+        """Sends an OnOff message and waits robustly for the status.
 
-        Bleibt die Antwort aus, wird erneut gesendet (bis STATUS_ATTEMPTS).
-        Erst wenn keiner der Versuche eine Antwort bringt, wird der Fehler
-        durchgereicht - dann ist die Verbindung wirklich weg und der Aufrufer
-        markiert die Lampe als offline, statt einen falschen Zustand zu halten.
-        params fuer OnOff-SET enthaelt eine TID; wir behalten sie ueber alle
-        Versuche bei, damit der Server Wiederholungen als Duplikat erkennt und
-        nicht doppelt schaltet.
+        If the response fails to arrive, it is resent (up to STATUS_ATTEMPTS).
+        Only when none of the attempts yields a response is the error
+        propagated - at that point the connection is really gone and the caller
+        marks the lamp as offline instead of holding a wrong state. params for
+        an OnOff SET contains a TID; we keep it across all attempts so the
+        server recognizes retries as a duplicate and doesn't switch twice.
         """
         last_err = None
         for _ in range(STATUS_ATTEMPTS):
@@ -160,24 +160,24 @@ class SkylightClient:
         raise last_err
 
     async def set_power(self, on: bool) -> bool:
-        """Schaltet an/aus, wartet auf Status. -> quittierter Zustand."""
+        """Turns on/off, waits for the status. -> acknowledged state."""
         params = await self._request(
             OP_ONOFF_SET,
             bytes([onoff_wire(on), self._next_tid()]) + transition_params())
-        # Status: present(1) [, target(1), remaining(1)]. Bei laufendem
-        # Uebergang ist der Ziel-Zustand massgeblich, nicht der Momentanwert.
-        # Achtung: Das ist die Quittung des Wire-Bytes, kein Messwert -- die
-        # Firmware spiegelt hier nur zurueck, was wir gesendet haben.
+        # Status: present(1) [, target(1), remaining(1)]. During a running
+        # transition the target state is authoritative, not the instantaneous
+        # value. Note: this is the acknowledgment of the wire byte, not a
+        # measurement -- the firmware only echoes back what we sent.
         #
-        # remaining ist dagegen aussagekraeftig: Es ist die Restzeit des
-        # Uebergangs, den die Lampe tatsaechlich faehrt. Bleibt es trotz
-        # gesetzter Transition Time bei 0x41, hat die Firmware das Feld
-        # ignoriert -- dann ist der Fade nicht per Mesh abstellbar.
+        # remaining, by contrast, is meaningful: it is the remaining time of the
+        # transition the lamp actually performs. If it stays at 0x41 despite a
+        # set Transition Time, the firmware ignored the field -- meaning the fade
+        # can't be turned off via mesh.
         if len(params) >= 3:
             self.last_remaining = params[2]
         return onoff_echo(params[1] if len(params) >= 3 else params[0])
 
     async def get_power(self) -> bool:
-        """Fragt den aktuellen Zustand ab. -> True=an."""
+        """Queries the current state. -> True=on."""
         params = await self._request(OP_ONOFF_GET, b"")
         return onoff_phys(params[0])

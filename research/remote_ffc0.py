@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Untersucht das custom Service f000ffc0 der Remote (ffc1/ffc2, read/write/notify).
-ffc1 lieferte ARM-Maschinencode -> das riecht nach einem Speicher-/Firmware-
-Fenster (TI-OAD/Debug-Base-UUID f000xxxx-0451-4000-b000-...).
+Inspects the remote's custom service f000ffc0 (ffc1/ffc2, read/write/notify).
+ffc1 returned ARM machine code -> that smells like a memory/firmware window
+(TI OAD/debug base UUID f000xxxx-0451-4000-b000-...).
 
-PHASE READ-ONLY: verbindet (Retry, Remote muss wach sein -> Taste HALTEN),
-liest ffc1/ffc2 mehrfach (aendert sich der Inhalt? = Streaming/Fenster) und
-lauscht ~10s auf Notifications. Schreibt (noch) NICHTS.
+READ-ONLY PHASE: connects (retry, the remote must be awake -> HOLD a button),
+reads ffc1/ffc2 several times (does the content change? = streaming/window) and
+listens ~10s for notifications. Writes NOTHING (yet).
 
     sudo systemctl stop skylight-bridge
-    python3 research/remote_ffc0.py [MAC] [dauer_s]
+    python3 research/remote_ffc0.py [MAC] [duration_s]
     sudo systemctl start skylight-bridge
 """
 
@@ -19,7 +19,7 @@ import sys
 from bleak import BleakClient, BleakScanner
 
 MAC = sys.argv[1] if len(sys.argv) > 1 else sys.exit(
-    "Usage: remote_ffc0.py <REMOTE_MAC> [dauer_s]  (MAC via scan_all.py finden)")
+    "Usage: remote_ffc0.py <REMOTE_MAC> [duration_s]  (find MAC via scan_all.py)")
 DUR = float(sys.argv[2]) if len(sys.argv) > 2 else 45.0
 
 FFC1 = "f000ffc1-0451-4000-b000-000000000000"
@@ -49,7 +49,7 @@ async def find(timeout=8.0):
 
 async def explore(dev):
     async with BleakClient(dev, timeout=20) as c:
-        print(f"# verbunden: {c.is_connected}\n", flush=True)
+        print(f"# connected: {c.is_connected}\n", flush=True)
 
         notes = []
 
@@ -57,14 +57,14 @@ async def explore(dev):
             notes.append((handle, bytes(data)))
             print(f"    NOTIFY h={handle}: {h(data)}", flush=True)
 
-        # Notifications an, damit ein evtl. Stream reinkommt
+        # notifications on, so any stream comes in
         for u in (FFC1, FFC2):
             try:
                 await c.start_notify(u, on_note)
             except Exception as e:
                 print(f"# notify {u[4:8]} n/a: {e}", flush=True)
 
-        # ffc1/ffc2 mehrfach lesen -> aendert sich was?
+        # read ffc1/ffc2 several times -> does anything change?
         for i in range(6):
             for u in (FFC2, FFC1):
                 try:
@@ -74,7 +74,7 @@ async def explore(dev):
                     print(f"[{i}] {u[4:8]} = <err: {e}>", flush=True)
             await asyncio.sleep(1.0)
 
-        print("# lausche 10s auf Notifications (Taste an der Remote druecken!) ...",
+        print("# listening 10s for notifications (press a button on the remote!) ...",
               flush=True)
         await asyncio.sleep(10)
 
@@ -83,26 +83,26 @@ async def explore(dev):
                 await c.stop_notify(u)
             except Exception:
                 pass
-        print(f"\n# {len(notes)} Notification(s) gesammelt.", flush=True)
+        print(f"\n# {len(notes)} notification(s) collected.", flush=True)
 
 
 async def main():
-    print(f"# Suche Remote {MAC} bis {DUR:.0f}s - TASTE GEDRUECKT HALTEN ...",
+    print(f"# Searching for remote {MAC} for {DUR:.0f}s - HOLD DOWN A BUTTON ...",
           flush=True)
     loop = asyncio.get_event_loop()
     t0 = loop.time()
     while loop.time() - t0 < DUR:
         dev = await find(8.0)
         if dev:
-            print("# >>> gefunden, verbinde ...", flush=True)
+            print("# >>> found, connecting ...", flush=True)
             try:
                 await explore(dev)
-                print("\n# fertig.", flush=True)
+                print("\n# done.", flush=True)
                 return
             except Exception as e:
-                print(f"# Connect/Explore-Fehler ({e}), retry ...", flush=True)
+                print(f"# connect/explore error ({e}), retry ...", flush=True)
         await asyncio.sleep(0.5)
-    print("# Remote nicht erreicht. Taste gehalten? Naeher ran?", flush=True)
+    print("# Remote not reached. Was a button held? Move closer?", flush=True)
 
 
 if __name__ == "__main__":

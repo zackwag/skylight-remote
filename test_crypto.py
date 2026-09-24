@@ -1,4 +1,4 @@
-"""Krypto-Selbsttest gegen die Sample-Daten aus Mesh Profile Spec 1.0.1 Kap. 8."""
+"""Crypto self-test against the sample data from Mesh Profile Spec 1.0.1 ch. 8."""
 
 from meshlib import crypto
 
@@ -30,4 +30,4 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print(f"OK {name}")
-    print("Alle Krypto-Tests bestanden.")
+    print("All crypto tests passed.")

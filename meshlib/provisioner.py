@@ -1,8 +1,8 @@
-"""PB-GATT-Provisioner: nimmt ein unprovisioniertes Gerät per GATT ins Netz auf.
+"""PB-GATT provisioner: takes an unprovisioned device into the network via GATT.
 
-Ablauf (Mesh Profile Spec Kap. 5): Invite -> Capabilities -> Start(No OOB) ->
-ECDH-Public-Keys -> Confirmation/Random -> verschlüsselte Provisioning Data
-(NetKey, Unicast) -> Complete. Liefert den DevKey des Geräts zurück.
+Flow (Mesh Profile Spec ch. 5): Invite -> Capabilities -> Start(No OOB) ->
+ECDH public keys -> Confirmation/Random -> encrypted Provisioning Data
+(NetKey, unicast) -> Complete. Returns the device's DevKey.
 """
 
 import asyncio
@@ -26,7 +26,7 @@ class ProvisioningError(Exception):
 
 
 def _sar_split(pdu: bytes, mtu: int) -> list[bytes]:
-    """Proxy-PDU-Framing (Typ 0x03 = Provisioning) inkl. Segmentierung."""
+    """Proxy PDU framing (type 0x03 = Provisioning) incl. segmentation."""
     payload_max = mtu - 1
     if len(pdu) <= payload_max:
         return [bytes([0x03]) + pdu]
@@ -48,15 +48,15 @@ class SarReassembler:
         self.buf = b""
 
     def feed(self, frame: bytes):
-        """-> komplette PDU oder None, wenn noch Segmente fehlen."""
+        """-> complete PDU or None if segments are still missing."""
         sar, payload = frame[0] >> 6, frame[1:]
-        if sar == 0:                       # komplett
+        if sar == 0:                       # complete
             return payload
-        if sar == 1:                       # erstes Segment
+        if sar == 1:                       # first segment
             self.buf = payload
             return None
         self.buf += payload
-        if sar == 3:                       # letztes Segment
+        if sar == 3:                       # last segment
             out, self.buf = self.buf, b""
             return out
         return None
@@ -64,7 +64,7 @@ class SarReassembler:
 
 async def provision(client, net_key: bytes, key_index: int, iv_index: int,
                     unicast: int, log=print) -> bytes:
-    """Provisioniert das verbundene Gerät. -> DevKey (16 Byte)."""
+    """Provisions the connected device. -> DevKey (16 bytes)."""
     rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
     sar = SarReassembler()
 
@@ -83,21 +83,21 @@ async def provision(client, net_key: bytes, key_index: int, iv_index: int,
     async def recv(expected: int) -> bytes:
         pdu = await asyncio.wait_for(rx_queue.get(), timeout=30)
         if pdu[0] == PDU_FAILED:
-            raise ProvisioningError(f"Geraet meldet Provisioning Failed, "
-                                    f"Grund 0x{pdu[1]:02x}")
+            raise ProvisioningError(f"Device reports Provisioning Failed, "
+                                    f"reason 0x{pdu[1]:02x}")
         if pdu[0] != expected:
-            raise ProvisioningError(f"PDU 0x{pdu[0]:02x} statt 0x{expected:02x}")
+            raise ProvisioningError(f"PDU 0x{pdu[0]:02x} instead of 0x{expected:02x}")
         return pdu[1:]
 
     # 1) Invite / Capabilities
     invite = bytes([0x00])                          # attention timer 0
     await send(bytes([PDU_INVITE]) + invite)
     caps = await recv(PDU_CAPS)
-    log(f"Capabilities: elemente={caps[0]} algorithmen=0x{caps[1]:02x}{caps[2]:02x}")
+    log(f"Capabilities: elements={caps[0]} algorithms=0x{caps[1]:02x}{caps[2]:02x}")
     if not caps[2] & 0x01:
-        raise ProvisioningError("Geraet kann kein FIPS P-256 (No-OOB)")
+        raise ProvisioningError("Device does not support FIPS P-256 (No-OOB)")
 
-    # 2) Start: Algorithm P-256, kein OOB-Public-Key, No-OOB-Auth
+    # 2) Start: Algorithm P-256, no OOB public key, No-OOB auth
     start = bytes([0x00, 0x00, 0x00, 0x00, 0x00])
     await send(bytes([PDU_START]) + start)
 
@@ -111,7 +111,7 @@ async def provision(client, net_key: bytes, key_index: int, iv_index: int,
         int.from_bytes(dev_pub[:32], "big"),
         int.from_bytes(dev_pub[32:], "big"), ec.SECP256R1()).public_key()
     secret = own_key.exchange(ec.ECDH(), peer)
-    log("ECDH-Schluesselaustausch ok")
+    log("ECDH key exchange ok")
 
     # 4) Confirmation / Random (Auth-Wert = 0, No OOB)
     conf_inputs = invite + caps + start + own_pub + dev_pub
@@ -126,8 +126,8 @@ async def provision(client, net_key: bytes, key_index: int, iv_index: int,
     await send(bytes([PDU_RANDOM]) + own_random)
     dev_random = await recv(PDU_RANDOM)
     if crypto.aes_cmac(conf_key, dev_random + auth) != dev_conf:
-        raise ProvisioningError("Confirmation-Pruefung fehlgeschlagen")
-    log("Authentisierung ok")
+        raise ProvisioningError("Confirmation check failed")
+    log("Authentication ok")
 
     # 5) Provisioning Data
     prov_salt = crypto.s1(conf_salt + own_random + dev_random)
@@ -139,7 +139,7 @@ async def provision(client, net_key: bytes, key_index: int, iv_index: int,
     enc = crypto.ccm_encrypt(session_key, session_nonce, data, 8)
     await send(bytes([PDU_DATA]) + enc)
     await recv(PDU_COMPLETE)
-    log(f"Provisioning abgeschlossen, Unicast 0x{unicast:04x}")
+    log(f"Provisioning complete, unicast 0x{unicast:04x}")
 
     await client.stop_notify(PROV_DATA_OUT)
     return dev_key

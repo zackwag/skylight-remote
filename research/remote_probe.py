@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Remote ausquetschen: verbindet sich mit der Fernbedienung (Proxy-Server 0x1828)
-und liest ALLES Lesbare raus - Gerätename, Appearance, Device-Info (Modell/
-Firmware/Hersteller), custom Characteristics + das volle Advertising
-(Hersteller-/Service-Daten).
+Squeeze the remote: connects to the remote control (proxy server 0x1828) and
+reads out EVERYTHING readable - device name, appearance, device info (model/
+firmware/manufacturer), custom characteristics + the full advertising
+(manufacturer/service data).
 
-Die Remote funkt nur kurz beim Tastendruck -> das Tool retryt ~40s lang.
-DU musst waehrenddessen eine Taste an der Remote GEDRUECKT HALTEN, damit sie
-wach bleibt.
+The remote only transmits briefly on a button press -> the tool retries for
+~40s. Meanwhile YOU must HOLD DOWN a button on the remote so it stays awake.
 
     sudo systemctl stop skylight-bridge
-    python3 research/remote_probe.py [MAC] [dauer_s]
+    python3 research/remote_probe.py [MAC] [duration_s]
     sudo systemctl start skylight-bridge
 """
 
@@ -20,7 +19,7 @@ import sys
 from bleak import BleakClient, BleakScanner
 
 MAC = sys.argv[1] if len(sys.argv) > 1 else sys.exit(
-    "Usage: remote_probe.py <REMOTE_MAC> [dauer_s]  (MAC via scan_all.py finden)")
+    "Usage: remote_probe.py <REMOTE_MAC> [duration_s]  (find MAC via scan_all.py)")
 DUR = float(sys.argv[2]) if len(sys.argv) > 2 else 40.0
 
 
@@ -30,7 +29,7 @@ def show(data: bytes) -> str:
 
 
 async def grab_adv(timeout=8.0):
-    """Scannt bis MAC auftaucht, gibt (device, advertisement) zurueck."""
+    """Scans until MAC shows up, returns (device, advertisement)."""
     fut = asyncio.get_event_loop().create_future()
 
     def cb(dev, adv):
@@ -60,7 +59,7 @@ async def dump_adv(adv):
 
 async def dump_gatt(dev):
     async with BleakClient(dev, timeout=20) as c:
-        print(f"# verbunden: {c.is_connected}\n", flush=True)
+        print(f"# connected: {c.is_connected}\n", flush=True)
         for svc in c.services:
             print(f"Service {svc.uuid}", flush=True)
             for ch in svc.characteristics:
@@ -71,33 +70,33 @@ async def dump_gatt(dev):
                         v = bytes(await c.read_gatt_char(ch))
                         print(f"    {short} [{props}] = {show(v)}", flush=True)
                     except Exception as e:
-                        print(f"    {short} [{props}] = <read-Fehler: {e}>",
+                        print(f"    {short} [{props}] = <read error: {e}>",
                               flush=True)
                 else:
-                    print(f"    {short} [{props}] = <nicht lesbar>", flush=True)
+                    print(f"    {short} [{props}] = <not readable>", flush=True)
 
 
 async def main():
-    print(f"# Suche Remote {MAC} bis zu {DUR:.0f}s - "
-          f"JETZT eine Taste GEDRUECKT HALTEN ...", flush=True)
+    print(f"# Searching for remote {MAC} for up to {DUR:.0f}s - "
+          f"NOW HOLD DOWN a button ...", flush=True)
     loop = asyncio.get_event_loop()
     t0 = loop.time()
     while loop.time() - t0 < DUR:
         hit = await grab_adv(timeout=8.0)
         if hit:
             dev, adv = hit
-            print(f"# >>> Remote gefunden: {dev.name or '(kein Name)'}",
+            print(f"# >>> Remote found: {dev.name or '(no name)'}",
                   flush=True)
             await dump_adv(adv)
             try:
                 await dump_gatt(dev)
-                print("\n# fertig - alles Lesbare oben.", flush=True)
+                print("\n# done - everything readable above.", flush=True)
                 return
             except Exception as e:
-                print(f"# GATT-Connect fehlgeschlagen ({e}), retry ...",
+                print(f"# GATT connect failed ({e}), retry ...",
                       flush=True)
         await asyncio.sleep(0.5)
-    print("# Remote nicht erreicht. Taste gedrueckt gehalten? Naeher ran?",
+    print("# Remote not reached. Was a button held down? Move closer?",
           flush=True)
 
 
