@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Finaler 'offene-Ecken'-Lauf. Deckt die letzten ungetesteten Wege ab:
-  1) Generic Power Level Set (0x1006) - nie ge-Set-tet
-  2) Vendor 0xC0 RC_KEY_REPORT mit Key-Codes 0x00..0x1F (Mode-Button-Emulation!)
-  3) strukturierte Vendor-Payloads (GROUP/ATTR mit Index)
-  4) Schreiben ins 0xFDA0-Service (fda6/fda8)
+Final 'loose ends' run. Covers the last untested paths:
+  1) Generic Power Level Set (0x1006) - never Set
+  2) Vendor 0xC0 RC_KEY_REPORT with key codes 0x00..0x1F (mode button emulation!)
+  3) structured vendor payloads (GROUP/ATTR with index)
+  4) writing to the 0xFDA0 service (fda6/fda8)
 
-Phase A ueber Mesh-Proxy, Phase B ueber direkte GATT-Verbindung (0xFDA0).
-Bridge muss gestoppt sein. Lampe beobachten!
+Phase A over the mesh proxy, phase B over a direct GATT connection (0xFDA0).
+The bridge must be stopped. Watch the lamp!
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -54,7 +54,7 @@ async def main():
 
     # ---------- Phase A: Mesh ----------
     async with MeshProxy(mac, ctx, cfg["src"], log=lambda *_: None) as proxy:
-        await fire(proxy, cfg, app, lamp, iv, keys, "AN baseline",
+        await fire(proxy, cfg, app, lamp, iv, keys, "ON baseline",
                    0x8202, bytes([0x00, tid(cfg)]))
 
         print("\n=== 1) Generic Power Level Set (0x8216) ===")
@@ -62,23 +62,23 @@ async def main():
                    0x8216, (0xFFFF).to_bytes(2, "little") + bytes([tid(cfg)]))
         await fire(proxy, cfg, app, lamp, iv, keys, "PowerLevel MIN",
                    0x8216, (0x0001).to_bytes(2, "little") + bytes([tid(cfg)]))
-        await fire(proxy, cfg, app, lamp, iv, keys, "wieder AN",
+        await fire(proxy, cfg, app, lamp, iv, keys, "ON again",
                    0x8202, bytes([0x00, tid(cfg)]))
 
-        print("\n=== 2) Vendor 0xC0 RC_KEY_REPORT: Key-Codes 0x00..0x1F ===")
+        print("\n=== 2) Vendor 0xC0 RC_KEY_REPORT: key codes 0x00..0x1F ===")
         for code in range(0x00, 0x20):
             await fire(proxy, cfg, app, lamp, iv, keys,
                        f"RC_KEY code=0x{code:02x}", vendor_op(0xC0),
                        bytes([code]), wait=1.4)
-        await fire(proxy, cfg, app, lamp, iv, keys, "wieder AN",
+        await fire(proxy, cfg, app, lamp, iv, keys, "ON again",
                    0x8202, bytes([0x00, tid(cfg)]))
 
-        print("\n=== 3) Strukturierte Vendor-Payloads ===")
+        print("\n=== 3) Structured vendor payloads ===")
         for op, base, lab in [
             (0xC2, bytes([1]), "GROUP 0xC2 idx=1"),
             (0xC3, bytes([1]), "GROUP 0xC3 idx=1"),
-            (0xC0, bytes([1, 1]), "RC_KEY [01,01] (Taste+Press)"),
-            (0xC0, bytes([1, 0]), "RC_KEY [01,00] (Taste+Release)"),
+            (0xC0, bytes([1, 1]), "RC_KEY [01,01] (key+press)"),
+            (0xC0, bytes([1, 0]), "RC_KEY [01,00] (key+release)"),
             (0xD1, bytes([0, 0, 1]), "ATTR 0xD1 a0=1"),
             (0xD2, bytes([0, 0, 0xFF]), "ATTR 0xD2 a0=ff"),
         ]:
@@ -88,8 +88,8 @@ async def main():
                                 bytes([0x00, tid(cfg)]))
         save_cfg(CONFIG_FILE, cfg)
 
-    # ---------- Phase B: 0xFDA0 direkt beschreiben ----------
-    print("\n=== 4) 0xFDA0 schreiben (fda6/fda8) ===")
+    # ---------- Phase B: write 0xFDA0 directly ----------
+    print("\n=== 4) write 0xFDA0 (fda6/fda8) ===")
     await asyncio.sleep(3)
     client = None
     for attempt in range(4):
@@ -98,7 +98,7 @@ async def main():
             await client.connect()
             break
         except Exception as e:
-            print(f"  connect Versuch {attempt + 1}: {e}")
+            print(f"  connect attempt {attempt + 1}: {e}")
             await asyncio.sleep(2)
     if client and client.is_connected:
         try:
@@ -109,9 +109,9 @@ async def main():
                     try:
                         await client.write_gatt_char(uuid, v, response=True)
                     except Exception as e:
-                        print(f"    Fehler: {e}")
+                        print(f"    error: {e}")
                     await asyncio.sleep(2)
-            # fda8 auf Originalwert 0x01 zuruecksetzen
+            # reset fda8 to its original value 0x01
             try:
                 await client.write_gatt_char(FDA8, b"\x01", response=True)
             except Exception:
@@ -119,9 +119,9 @@ async def main():
         finally:
             await client.disconnect()
     else:
-        print("  Konnte fuer 0xFDA0 nicht verbinden.")
+        print("  Could not connect for 0xFDA0.")
 
-    print("\n=== fertig. Bei WELCHEM Schritt hat die Lampe reagiert? ===")
+    print("\n=== done. At WHICH step did the lamp react? ===")
 
 
 if __name__ == "__main__":

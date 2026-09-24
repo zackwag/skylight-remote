@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-Schritt Z - Mesh-Adv-Pakete mitschneiden (Pi-Onboard-BLE, KEIN Dongle noetig).
+Step Z - capture mesh adv packets (Pi onboard BLE, NO dongle needed).
 
-Nutzt die BlueZ-Werkzeuge, die auf dem Pi eh da sind:
-  - `btmon -w` schreibt einen rohen HCI-Mitschnitt (BTSnoop, monitor-Format),
-  - `bluetoothctl scan on` laesst BlueZ ordentlich ueber alle 3 Adv-Kanaele
-    scannen (besser als ein selbstgebauter Single-Channel-Socket).
-Danach parsen wir den Mitschnitt, ziehen aus jedem Advertising Report die
-AD-Struktur mit Type 0x2A (Mesh Message) / 0x2B (Mesh Beacon) / 0x29 (PB-ADV)
-und geben die Payload als hex aus - copy-paste-fertig fuer decode_capture.py.
+Uses the BlueZ tools that are on the Pi anyway:
+  - `btmon -w` writes a raw HCI capture (BTSnoop, monitor format),
+  - `bluetoothctl scan on` lets BlueZ scan properly across all 3 adv channels
+    (better than a hand-built single-channel socket).
+Then we parse the capture, extract from each advertising report the AD structure
+with type 0x2A (Mesh Message) / 0x2B (Mesh Beacon) / 0x29 (PB-ADV) and print the
+payload as hex - copy-paste-ready for decode_capture.py.
 
-    sudo python3 sniff_mesh.py 30 > capture.hex   # 30 s mitschneiden
+    sudo python3 sniff_mesh.py 30 > capture.hex   # capture for 30 s
     python3 decode_capture.py --pdu-file capture.hex
 
-Waehrend es laeuft: an der Fernbedienung Helligkeit/Farbe druecken. Ein Druck
-wird viele Male wiederholt gesendet.
+While it runs: press brightness/color on the remote. One press is sent
+repeatedly, many times.
 
-Braucht root (btmon-Monitor-Socket) -> mit sudo starten. NUR Linux/BlueZ.
-Selbsttest des Parsers (laeuft ueberall, ohne BLE):
+Needs root (btmon monitor socket) -> start with sudo. Linux/BlueZ ONLY.
+Self-test of the parser (runs everywhere, without BLE):
 
     python3 sniff_mesh.py --selftest
 """
@@ -32,7 +32,7 @@ MESH_AD_TYPES = {0x2A: "mesh-message", 0x2B: "mesh-beacon", 0x29: "pb-adv"}
 
 
 def extract_ad(adv_data: bytes):
-    """BLE-AD-Struktur [len][type][data...] zerlegen. -> Liste (type, data)."""
+    """Split a BLE AD structure [len][type][data...]. -> list (type, data)."""
     out, i = [], 0
     while i < len(adv_data):
         ln = adv_data[i]
@@ -44,23 +44,23 @@ def extract_ad(adv_data: bytes):
 
 
 def mesh_payloads(adv_data: bytes):
-    """-> Liste (ad_type, payload_hex) nur fuer Mesh-relevante AD-Typen."""
+    """-> list (ad_type, payload_hex) only for mesh-relevant AD types."""
     return [(t, d.hex()) for t, d in extract_ad(adv_data) if t in MESH_AD_TYPES]
 
 
 def parse_btsnoop(blob: bytes):
-    """BTSnoop im btmon-'monitor'-Format zerlegen. -> Liste (addr_hex, rssi,
-    adv_data) aus LE Advertising Reports (Legacy 0x02 UND Extended 0x0D)."""
+    """Parse BTSnoop in btmon 'monitor' format. -> list (addr_hex, rssi,
+    adv_data) from LE Advertising Reports (Legacy 0x02 AND Extended 0x0D)."""
     if blob[:8] != b"btsnoop\x00":
-        raise ValueError("kein BTSnoop-File")
+        raise ValueError("not a BTSnoop file")
     reports = []
-    i = 16                                   # File-Header ueberspringen
+    i = 16                                   # skip the file header
     while i + 24 <= len(blob):
         _orig, incl, flags, _drops = struct.unpack(">IIII", blob[i:i + 16])
-        i += 24                              # + 8 Byte Timestamp
+        i += 24                              # + 8 bytes timestamp
         pkt = blob[i:i + incl]
         i += incl
-        if flags & 0xFFFF != 0x0003:         # nur Event-Pakete
+        if flags & 0xFFFF != 0x0003:         # event packets only
             continue
         # HCI-Event ohne 0x04-Prefix: [evt][plen][params]
         if len(pkt) < 4 or pkt[0] != 0x3E:   # LE Meta Event
@@ -81,7 +81,7 @@ def parse_btsnoop(blob: bytes):
                 for _ in range(num):
                     # evt_type(2) addr_type(1) addr(6) prim_phy(1) sec_phy(1)
                     # sid(1) tx(1) rssi(1) per_int(2) dir_addr_type(1)
-                    # dir_addr(6) data_len(1) data(N)  = 24 Byte Kopf
+                    # dir_addr(6) data_len(1) data(N)  = 24-byte header
                     addr = pkt[off + 2:off + 8][::-1].hex(":")
                     rssi = pkt[off + 8]
                     dlen = pkt[off + 23]
@@ -95,8 +95,8 @@ def parse_btsnoop(blob: bytes):
 
 def _capture(seconds: int):
     snoop = tempfile.NamedTemporaryFile(suffix=".snoop", delete=False).name
-    print(f"# Scanne {seconds}s (btmon -> {snoop}). Jetzt Remote-Tasten "
-          f"druecken ...", file=sys.stderr)
+    print(f"# Scanning {seconds}s (btmon -> {snoop}). Now press remote "
+          f"buttons ...", file=sys.stderr)
     btmon = subprocess.Popen(["btmon", "-w", snoop],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -120,17 +120,17 @@ def run_sniffer(seconds: int):
             if payload not in seen:
                 seen.add(payload)
                 print(f"{payload}  # {MESH_AD_TYPES[ad_type]}")
-    print(f"# {len(seen)} eindeutige Mesh-Payload(s) aus {len(reports)} "
-          f"Adv-Reports.", file=sys.stderr)
+    print(f"# {len(seen)} unique mesh payload(s) from {len(reports)} "
+          f"adv reports.", file=sys.stderr)
     if not seen:
-        print("# Kein SIG-Mesh (0x2A) gefunden -> evtl. proprietaeres Telink-Adv."
-              " Diagnose mit:  sudo python3 sniff_mesh.py --diag", file=sys.stderr)
+        print("# No SIG mesh (0x2A) found -> possibly proprietary Telink adv."
+              " Diagnose with:  sudo python3 sniff_mesh.py --diag", file=sys.stderr)
 
 
 def run_diag(seconds: int, watch_mac: str = ""):
-    """Zeigt pro Absender die AD-Typen und (bei 0xFF) die Company-ID. So sehen
-    wir, ob beim Tastendruck ein Telink-Geraet (Company 0x0211) oder neuer
-    Absender auftaucht - auch wenn es KEIN SIG-Mesh ist."""
+    """Shows the AD types per sender and (for 0xFF) the company ID. That way we
+    see whether a Telink device (Company 0x0211) or a new sender shows up on a
+    button press - even if it is NOT SIG mesh."""
     from collections import defaultdict
     reports = parse_btsnoop(_capture(seconds))
     per = defaultdict(lambda: {"n": 0, "rssi": -999, "ad": set(),
@@ -147,8 +147,8 @@ def run_diag(seconds: int, watch_mac: str = ""):
                     d["sample"] = data.hex()
             if t in MESH_AD_TYPES and not d["sample"]:
                 d["sample"] = data.hex()
-    print(f"# {len(reports)} Adv-Reports von {len(per)} Absendern\n", file=sys.stderr)
-    # nach RSSI (Naehe) sortiert - die Remote in Pi-Naehe steht oben
+    print(f"# {len(reports)} adv reports from {len(per)} senders\n", file=sys.stderr)
+    # sorted by RSSI (proximity) - the remote near the Pi is at the top
     for addr, d in sorted(per.items(), key=lambda kv: -kv[1]["rssi"]):
         ads = " ".join(f"0x{t:02x}" for t in sorted(d["ad"]))
         comp = " ".join(f"0x{c:04x}" for c in sorted(d["companies"]))
@@ -156,7 +156,7 @@ def run_diag(seconds: int, watch_mac: str = ""):
         if 0x0211 in d["companies"]:
             tag += "  <== TELINK(0x0211)!"
         if watch_mac and addr.upper() == watch_mac.upper():
-            tag += "  <== LAMPE"
+            tag += "  <== LAMP"
         if any(t in MESH_AD_TYPES for t in d["ad"]):
             tag += "  <== SIG-MESH"
         print(f"{addr}  rssi={d['rssi']:>4}  n={d['n']:>3}  AD:[{ads}]  "
@@ -171,8 +171,8 @@ def selftest():
     ok_ad = mesh_payloads(blob) == [(0x2A, mesh.hex())]
     print("AD-Extractor:", mesh_payloads(blob))
 
-    # 2) BTSnoop-Parser: ein Event-Record mit Legacy-Adv-Report, der eine
-    #    Mesh-Message-AD traegt, in ein minimales monitor-BTSnoop verpacken.
+    # 2) BTSnoop parser: wrap an event record with a legacy adv report carrying
+    #    a mesh-message AD into a minimal monitor BTSnoop.
     adv = bytes([2, 0x01, 0x06]) + bytes([1 + len(mesh), 0x2A]) + mesh
     report = (bytes([0x00, 0x01]) + bytes.fromhex("112233445566")
               + bytes([len(adv)]) + adv + bytes([0xC0]))       # +RSSI
@@ -185,7 +185,7 @@ def selftest():
     print("BTSnoop-Parser:", [(a, mesh_payloads(adv)) for a, _r, adv in got])
 
     ok = ok_ad and ok_snoop
-    print("SELBSTTEST:", "OK" if ok else "FEHLGESCHLAGEN!")
+    print("SELF-TEST:", "OK" if ok else "FAILED!")
     return 0 if ok else 1
 
 
@@ -193,13 +193,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("seconds", nargs="?", type=int, default=30,
-                    help="Mitschnittdauer in Sekunden (default 30)")
+                    help="capture duration in seconds (default 30)")
     ap.add_argument("--selftest", action="store_true",
-                    help="nur die Parser testen (laeuft ueberall)")
+                    help="only test the parsers (runs everywhere)")
     ap.add_argument("--diag", action="store_true",
-                    help="Diagnose: ALLE Absender + AD-Typen + Company-IDs")
+                    help="diagnostic: ALL senders + AD types + company IDs")
     ap.add_argument("--watch-mac", default="",
-                    help="diese MAC im Diag-Output markieren (z.B. Lampe)")
+                    help="mark this MAC in the diag output (e.g. the lamp)")
     args = ap.parse_args()
     if args.selftest:
         return selftest()

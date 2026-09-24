@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-Diagnose - alle lesbaren GATT-Characteristics der Lampe auslesen.
+Diagnostic - read all readable GATT characteristics of the lamp.
 
-Fokus: das custom 0xFDA0-Service (Chars fda4/fda6/fda7/fda8). Deren Rohwerte
-zeigen, ob dort ein Steuer-/Status-Interface (Helligkeit?) sitzt oder nur
-OTA/Version/Config. Zusaetzlich Geraetename & Standard-Infos zur Einordnung.
+Focus: the custom 0xFDA0 service (chars fda4/fda6/fda7/fda8). Their raw values
+show whether there is a control/status interface (brightness?) there or only
+OTA/version/config. Plus the device name & standard info for context.
 
-WICHTIG: Bridge vorher stoppen (Lampe advertised nur unverbunden):
+IMPORTANT: stop the bridge first (the lamp only advertises when unconnected):
     sudo systemctl stop skylight-bridge
 
-    python3 fda0_probe.py            # MAC aus skylight-mesh.json
+    python3 fda0_probe.py            # MAC from skylight-mesh.json
     python3 fda0_probe.py <MAC>
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -41,13 +41,13 @@ def show(data: bytes) -> str:
 
 async def main():
     mac = sys.argv[1] if len(sys.argv) > 1 else load_mac()
-    print(f"Suche Lampe {mac} ... (Bridge gestoppt?)")
+    print(f"Searching for lamp {mac} ... (bridge stopped?)")
     dev = await BleakScanner.find_device_by_address(mac, timeout=20.0)
     if not dev:
-        print("Nicht gefunden.")
+        print("Not found.")
         return 1
     async with BleakClient(dev) as client:
-        print(f"Verbunden: {client.is_connected}\n")
+        print(f"Connected: {client.is_connected}\n")
         for svc in client.services:
             is_fda0 = svc.uuid.lower().startswith("0000fda0")
             marker = "  <== custom 0xFDA0" if is_fda0 else ""
@@ -59,9 +59,9 @@ async def main():
                         val = bytes(await client.read_gatt_char(ch))
                         print(f"    {short} [{','.join(ch.properties)}] = {show(val)}")
                     except Exception as e:
-                        print(f"    {short} [{','.join(ch.properties)}] = <read-Fehler: {e}>")
+                        print(f"    {short} [{','.join(ch.properties)}] = <read error: {e}>")
                 else:
-                    print(f"    {short} [{','.join(ch.properties)}] = <nicht lesbar>")
+                    print(f"    {short} [{','.join(ch.properties)}] = <not readable>")
     return 0
 
 

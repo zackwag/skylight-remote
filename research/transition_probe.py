@@ -1,39 +1,39 @@
 #!/usr/bin/env python3
 """
-Frage: Laesst sich der Fade der Lampe per Mesh abstellen?
+Question: can the lamp's fade be turned off via mesh?
 
-Die Lampe schaltet nicht, sie faehrt hoch. Gemessen am Helligkeitssensor im
-Bad (2026-08-09): nach dem quittierten "an" stieg die Beleuchtungsstaerke
-ueber rund 3 s von 0 auf 65 lx. Die Schaltkette davor braucht nur ~170 ms --
-der Fade ist also praktisch die gesamte spuerbare Wartezeit.
+The lamp doesn't switch, it ramps up. Measured at the bathroom's light sensor
+(2026-08-09): after the acknowledged "on", the illuminance rose from 0 to 65 lx
+over roughly 3 s. The switching chain before it only needs ~170 ms -- so the
+fade is practically the entire noticeable wait.
 
-Ein Generic OnOff Set darf hinter OnOff und TID zwei OPTIONALE Bytes fuehren:
-Transition Time und Delay. Werden sie weggelassen -- wie bisher --, nimmt der
-Server seine eigene Default Transition Time.
+A Generic OnOff Set may carry two OPTIONAL bytes after OnOff and TID:
+Transition Time and Delay. If they are omitted -- as before --, the server uses
+its own Default Transition Time.
 
-Dass die Firmware Uebergaenge ueberhaupt kennt, sagt sie selbst: Die Quittung
-auf ein SET ist [present, target, remaining], und remaining ist 0x41 --
-Aufloesung 1 s, 1 Schritt. Dieses Byte ist hier das Messinstrument:
+That the firmware knows transitions at all, it tells us itself: the
+acknowledgment to a SET is [present, target, remaining], and remaining is 0x41
+-- resolution 1 s, 1 step. This byte is the measurement instrument here:
 
-    remaining == 0x00  ->  kein Uebergang mehr, das Feld wirkt
-    remaining == 0x41  ->  unveraendert, die Firmware ignoriert das Feld
+    remaining == 0x00  ->  no more transition, the field takes effect
+    remaining == 0x41  ->  unchanged, the firmware ignores the field
 
-ACHTUNG: Die README notiert unter "On/Off-Pfad in allen Varianten
-(... Transition-Bytes) -> nichts". Das war eine andere Frage: Dort wurde
-gesucht, ob die Extra-Bytes einen MODUS umschalten, mit den Werten 0x01-0x06
-und per Augenschein. Der Wert 0x00 kam nie vor, und die Uebergangszeit als
-Uebergangszeit wurde nie gemessen. Beides holt dieses Skript nach.
+NOTE: the README records under "On/off path in all variants
+(... transition bytes) -> nothing". That was a different question: there we were
+looking for whether the extra bytes switch a MODE, using the values 0x01-0x06
+and by eye. The value 0x00 never occurred, and the transition time as a
+transition time was never measured. This script covers both.
 
-Die Bridge muss gestoppt sein -- sie haelt sonst die BLE-Verbindung:
+The bridge must be stopped -- otherwise it holds the BLE connection:
     sudo systemctl stop skylight-bridge
     python3 research/transition_probe.py
     sudo systemctl start skylight-bridge
 
-Die Lampe schaltet dabei mehrfach an und aus.
+The lamp switches on and off several times in the process.
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -44,53 +44,53 @@ import time
 from meshlib import skylight as sky_mod
 from meshlib.skylight import SkylightClient, transition_wire
 
-# (Label, Wert fuer SKYLIGHT_TRANSITION_MS)
-FAELLE = [
-    ("bisher (Felder weggelassen)", "default"),
-    ("sofort (0 ms)", "0"),
-    ("kurzer Fade (300 ms)", "300"),
+# (label, value for SKYLIGHT_TRANSITION_MS)
+CASES = [
+    ("previous (fields omitted)", "default"),
+    ("immediate (0 ms)", "0"),
+    ("short fade (300 ms)", "300"),
 ]
 
 
-def deute(b):
-    """Transition-Time-Byte -> lesbar."""
+def interpret(b):
+    """Transition Time byte -> readable."""
     if b is None:
-        return "keine Angabe (Quittung war kuerzer als 3 Bytes)"
-    schritte = b & 0x3F
+        return "no value (the acknowledgment was shorter than 3 bytes)"
+    steps = b & 0x3F
     ms = {0b00: 100, 0b01: 1000, 0b10: 10_000, 0b11: 600_000}[b >> 6]
-    if schritte == 0x3F:
-        return f"0x{b:02x} = unbekannt"
-    return f"0x{b:02x} = {schritte} x {ms} ms = {schritte * ms / 1000:g} s"
+    if steps == 0x3F:
+        return f"0x{b:02x} = unknown"
+    return f"0x{b:02x} = {steps} x {ms} ms = {steps * ms / 1000:g} s"
 
 
 async def main():
-    print("Bridge gestoppt? Die Lampe schaltet gleich mehrfach.\n")
+    print("Bridge stopped? The lamp will switch several times.\n")
     async with SkylightClient() as sky:
-        for label, wert in FAELLE:
-            sky_mod.TRANSITION_MS = wert
-            gesendet = sky_mod.transition_params()
+        for label, value in CASES:
+            sky_mod.TRANSITION_MS = value
+            sent = sky_mod.transition_params()
             print(f"=== {label} ===")
-            print(f"    angehaengte Bytes: "
-                  f"{gesendet.hex() if gesendet else '(keine)'}")
-            if wert not in ("default",):
-                print(f"    davon Transition Time: "
-                      f"{deute(transition_wire(int(wert)))}")
+            print(f"    appended bytes: "
+                  f"{sent.hex() if sent else '(none)'}")
+            if value not in ("default",):
+                print(f"    of which Transition Time: "
+                      f"{interpret(transition_wire(int(value)))}")
 
-            for ziel in (True, False):
+            for target in (True, False):
                 t0 = time.monotonic()
                 sky.last_remaining = None
-                await sky.set_power(ziel)
+                await sky.set_power(target)
                 dt = (time.monotonic() - t0) * 1000
-                print(f"    {'AN ' if ziel else 'AUS'} quittiert nach "
-                      f"{dt:.0f} ms | remaining: {deute(sky.last_remaining)}")
-                # Uebergang auslaufen lassen, sonst misst der naechste Fall
-                # in eine noch laufende Rampe hinein.
+                print(f"    {'ON ' if target else 'OFF'} acknowledged after "
+                      f"{dt:.0f} ms | remaining: {interpret(sky.last_remaining)}")
+                # let the transition finish, otherwise the next case measures
+                # into a still-running ramp.
                 await asyncio.sleep(4)
             print()
 
-    print("Auswertung: Faellt remaining bei '0 ms' auf 0x00, wirkt das Feld "
-          "und der Fade ist abstellbar.\nBleibt es bei 0x41, ignoriert die "
-          "Firmware es -- dann ist der Fade per Mesh nicht erreichbar.")
+    print("Analysis: if remaining drops to 0x00 at '0 ms', the field takes "
+          "effect and the fade can be turned off.\nIf it stays at 0x41, the "
+          "firmware ignores it -- then the fade is not reachable via mesh.")
 
 
 if __name__ == "__main__":

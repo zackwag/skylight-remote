@@ -1,4 +1,4 @@
-# Mesh-Netzwerkschlüssel - NIEMALS committen
+# Mesh network keys - NEVER commit
 mesh-export.json
 *.key
 secrets.*
@@ -10,11 +10,11 @@ __pycache__/
 .venv/
 venv/
 
-# Pi-Backup & Images - nicht committen
+# Pi backups & images - do not commit
 pi-backup/
 skylight-mesh.json
 
-# Funk-Mitschnitte & Diagnose-Logs - koennen Geraete-Identitaeten enthalten
+# Radio captures & diagnostic logs - may contain device identities
 *.hex
 *.snoop
 sniff.log

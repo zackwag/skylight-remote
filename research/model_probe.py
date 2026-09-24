@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Umfassender Modell-Prober: bindet app_key an ALLE steuerbaren SIG-Modelle der
-Lampe (auch die, die provision.py nie gebunden hat) und feuert distinkte
-Kommandos - du beobachtest, was wirkt (Modes/Farbe/Helligkeit).
+Comprehensive model prober: binds app_key to ALL controllable SIG models of the
+lamp (including those provision.py never bound) and fires distinct commands -
+you observe what has an effect (modes/color/brightness).
 
-Kandidaten fuer die 'Modes' (nie zuvor getestet): Scene Recall, CTL-Temperatur
-(warm/kalt = Tageslicht?), Generic Level, HSL Hue/Saturation.
+Candidates for the 'modes' (never tested before): Scene Recall, CTL temperature
+(warm/cool = daylight?), Generic Level, HSL Hue/Saturation.
 
-    python3 model_probe.py          # bind alles + Kommando-Sequenz
-Bridge muss gestoppt sein.
+    python3 model_probe.py          # bind everything + command sequence
+The bridge must be stopped.
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -28,7 +28,7 @@ from vendor_probe import listen
 
 OP_BIND, OP_BIND_STATUS = 0x803D, 0x803E
 
-# alle steuerbaren Modelle binden (inkl. bisher ungebundene)
+# bind all controllable models (incl. previously unbound ones)
 BIND_MODELS = [0x1000, 0x1002, 0x1004, 0x1006, 0x1300, 0x1301, 0x1303,
                0x1306, 0x1307, 0x130a, 0x130b, 0x1203]
 
@@ -45,7 +45,7 @@ async def do_bind(proxy, cfg, dev, lamp, iv, keys, model):
         for _k, r in await listen(proxy, lamp, iv, keys, 2.2):
             if r and r[1][0] == OP_BIND_STATUS:
                 return "OK" if r[1][1][0] == 0 else f"ERR 0x{r[1][1][0]:02x}"
-    return "keine Antwort"
+    return "no response"
 
 
 async def fire(proxy, cfg, app, lamp, iv, keys, label, op, base, add_tid=True):
@@ -66,21 +66,21 @@ async def main():
     keys = (("app", app, 0x01), ("dev", dev, 0x02))
 
     async with MeshProxy(cfg["mac"], ctx, cfg["src"], log=lambda *_: None) as proxy:
-        print("=== Bind app_key an alle Modelle ===")
+        print("=== Bind app_key to all models ===")
         for m in BIND_MODELS:
             print(f"  0x{m:04x}: {await do_bind(proxy, cfg, dev, lamp, iv, keys, m)}")
 
-        print("\nLampe AN ...")
+        print("\nLamp ON ...")
         await proxy.send_access(cfg, app, True, lamp, 0x8202, bytes([0x00, tid(cfg)]))
         await asyncio.sleep(2)
 
-        print("\n=== Scene Register Get (welche Szenen/Modes?) ===")
+        print("\n=== Scene Register Get (which scenes/modes?) ===")
         await proxy.send_access(cfg, app, True, lamp, 0x8244, b"")
         for _k, r in await listen(proxy, lamp, iv, keys, 2.5):
             if r:
                 print(f"  <- 0x{r[1][0]:x} {r[1][1].hex()}")
 
-        # (label, opcode, base-params ohne TID)
+        # (label, opcode, base params without TID)
         WARM, COOL = (0x07D0).to_bytes(2, "little"), (0x1964).to_bytes(2, "little")
         duv = (0).to_bytes(2, "little")
         seq = [
@@ -90,28 +90,28 @@ async def main():
             ("Scene Recall 4", 0x8242, (4).to_bytes(2, "little")),
             ("Scene Recall 5", 0x8242, (5).to_bytes(2, "little")),
             ("Scene Recall 6", 0x8242, (6).to_bytes(2, "little")),
-            ("CTL-Temp WARM (2000K)", 0x8264, WARM + duv),
-            ("CTL-Temp KALT (6500K)", 0x8264, COOL + duv),
-            ("CTL Set warm+voll", 0x825E, (0xFFFF).to_bytes(2, "little") + WARM + duv),
-            ("CTL Set kalt+voll", 0x825E, (0xFFFF).to_bytes(2, "little") + COOL + duv),
+            ("CTL temp WARM (2000K)", 0x8264, WARM + duv),
+            ("CTL temp COOL (6500K)", 0x8264, COOL + duv),
+            ("CTL Set warm+full", 0x825E, (0xFFFF).to_bytes(2, "little") + WARM + duv),
+            ("CTL Set cool+full", 0x825E, (0xFFFF).to_bytes(2, "little") + COOL + duv),
             ("Level MAX", 0x8206, (0x7FFF).to_bytes(2, "little")),
             ("Level MIN", 0x8206, (-0x8000 & 0xFFFF).to_bytes(2, "little")),
             ("Lightness MAX", 0x824C, (0xFFFF).to_bytes(2, "little")),
             ("Lightness 25%", 0x824C, (0x4000).to_bytes(2, "little")),
-            ("HSL rot voll", 0x8276, (0xFFFF).to_bytes(2, "little") + (0x0000).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
-            ("HSL gruen voll", 0x8276, (0xFFFF).to_bytes(2, "little") + (0x5555).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
-            ("HSL blau voll", 0x8276, (0xFFFF).to_bytes(2, "little") + (0xAAAA).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
-            ("HSL-Hue rot", 0x826F, (0x0000).to_bytes(2, "little")),
-            ("HSL-Sat voll", 0x8273, (0xFFFF).to_bytes(2, "little")),
+            ("HSL red full", 0x8276, (0xFFFF).to_bytes(2, "little") + (0x0000).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
+            ("HSL green full", 0x8276, (0xFFFF).to_bytes(2, "little") + (0x5555).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
+            ("HSL blue full", 0x8276, (0xFFFF).to_bytes(2, "little") + (0xAAAA).to_bytes(2, "little") + (0xFFFF).to_bytes(2, "little")),
+            ("HSL Hue red", 0x826F, (0x0000).to_bytes(2, "little")),
+            ("HSL Sat full", 0x8273, (0xFFFF).to_bytes(2, "little")),
         ]
-        print(f"\n=== {len(seq)} Kommandos im ~5s-Takt - LAMPE BEOBACHTEN ===")
+        print(f"\n=== {len(seq)} commands at ~5s intervals - WATCH THE LAMP ===")
         for label, op, base in seq:
             await fire(proxy, cfg, app, lamp, iv, keys, label, op, base)
 
-        # sauber hell lassen
+        # leave it cleanly bright
         await proxy.send_access(cfg, app, True, lamp, 0x8202, bytes([0x00, tid(cfg)]))
         save_cfg(CONFIG_FILE, cfg)
-        print("\n=== fertig. Bei WELCHEM Label hat die Lampe reagiert? ===")
+        print("\n=== done. At WHICH label did the lamp react? ===")
 
 
 if __name__ == "__main__":

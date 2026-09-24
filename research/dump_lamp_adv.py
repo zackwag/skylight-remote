@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Das ECHTE Advertising der Lampe auslesen - Service-Data, Manufacturer-Data,
-Name, Service-UUIDs - damit wir es im Fake (imp_lamp.py) 1:1 replizieren und
-die Remote uns als 'ihre' Lampe akzeptiert.
+Read the lamp's ACTUAL advertising - service data, manufacturer data, name,
+service UUIDs - so we can replicate it 1:1 in the fake (imp_lamp.py) and the
+remote accepts us as 'its' lamp.
 
-Lampe muss an & unverbunden sein (Bridge gestoppt).
+The lamp must be on & unconnected (bridge stopped).
 
-    python3 dump_lamp_adv.py            # MAC aus skylight-mesh.json
+    python3 dump_lamp_adv.py            # MAC from skylight-mesh.json
     python3 dump_lamp_adv.py <MAC>
 """
 
-# --- Pfad-Bootstrap: dieses Tool liegt in research/, der Stack + die
-# Config (skylight-mesh.json) liegen im Repo-Root eine Ebene hoeher. ---
+# --- Path bootstrap: this tool lives in research/, while the stack + the
+# config (skylight-mesh.json) live in the repo root one level up. ---
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _ROOT)
@@ -33,7 +33,7 @@ def load_mac():
 
 async def main():
     mac = (sys.argv[1] if len(sys.argv) > 1 else load_mac()).upper()
-    print(f"Scanne 15s nach {mac} ...")
+    print(f"Scanning 15s for {mac} ...")
     hits = []
 
     def cb(dev, adv):
@@ -46,10 +46,10 @@ async def main():
     await scanner.stop()
 
     if not hits:
-        print("Nicht gesehen. Lampe an? Bridge gestoppt?")
+        print("Not seen. Lamp on? Bridge stopped?")
         return 1
     adv = hits[-1]
-    print(f"\n=== Advertising von {mac} ({len(hits)} Pakete) ===")
+    print(f"\n=== Advertising from {mac} ({len(hits)} packets) ===")
     print(f"local_name     : {adv.local_name!r}")
     print(f"tx_power       : {adv.tx_power}")
     print(f"rssi           : {adv.rssi}")

@@ -1,5 +1,5 @@
 [Unit]
-Description=Skylight MQTT-Bridge (BLE Mesh <-> Home Assistant)
+Description=Skylight MQTT bridge (BLE mesh <-> Home Assistant)
 After=network-online.target bluetooth.service docker.service
 Wants=network-online.target
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Vollstaendiges, rein lesendes Inventar der Lampe: fragt so viel State ab, wie
-ohne Firmware-Dump ueberhaupt geht -> Config-Server (DevKey), Health-Faults,
-und ALLE Modell-States (inkl. Defaults/Ranges/Scheduler/Time). AENDERT NICHTS.
+Complete, read-only inventory of the lamp: queries as much state as is possible
+at all without a firmware dump -> config server (DevKey), health faults, and ALL
+model states (incl. defaults/ranges/scheduler/time). CHANGES NOTHING.
 
-Zweck: "was traegt die Lampe in sich" komplett sichtbar machen. Ergaenzt
-state_dump.py (nur die Kern-States) um Config, Health und die selten gelesenen
-Detail-States.
+Purpose: make "what the lamp carries inside it" fully visible. Extends
+state_dump.py (only the core states) with config, health, and the rarely-read
+detail states.
 
-Bridge vorher stoppen (Proxy exklusiv):
+Stop the bridge first (proxy exclusive):
     sudo systemctl stop skylight-bridge
     python3 research/full_inventory.py
 """
@@ -25,12 +25,12 @@ from meshlib.state import load_cfg, save_cfg
 from meshlib.proxy import MeshProxy
 from vendor_probe import listen
 
-# Vendor-Modell der Lampe (aus Composition): Element 0x0002, Company 0x0211
+# Vendor model of the lamp (from Composition): element 0x0002, company 0x0211
 ELEM = 0x0002
 CID = 0x0211
 VMODEL = 0x0000
 
-# --- Config-Server (mit DevKey) : (Name, GET-Op, Status-Op, Params) ---
+# --- Config server (with DevKey) : (name, GET op, status op, params) ---
 CONFIG_GETS = [
     ("Default TTL",       0x800C, 0x800D, b""),
     ("Relay",             0x8026, 0x8027, b""),
@@ -45,7 +45,7 @@ CONFIG_GETS = [
     ("Node Identity(nk0)",0x8046, 0x8048, b"\x00\x00"),
 ]
 
-# Vendor-Modell-Bindings/Pub/Sub (elem + company + model, little-endian)
+# Vendor model bindings/pub/sub (elem + company + model, little-endian)
 VM_PARAMS = ELEM.to_bytes(2, "little") + CID.to_bytes(2, "little") + VMODEL.to_bytes(2, "little")
 CONFIG_MODEL_GETS = [
     ("Vendor AppBind list", 0x804D, 0x804E, VM_PARAMS),
@@ -53,12 +53,12 @@ CONFIG_MODEL_GETS = [
     ("Vendor Publication",  0x8018, 0x8019, ELEM.to_bytes(2, "little") + CID.to_bytes(2, "little") + VMODEL.to_bytes(2, "little")),
 ]
 
-# --- Health (mit AppKey) : Fault-Get fuer Company 0x0211 ---
+# --- Health (with AppKey) : fault-get for company 0x0211 ---
 HEALTH_GETS = [
     ("Health Fault(0x0211)", 0x8031, 0x05, CID.to_bytes(2, "little")),
 ]
 
-# --- Alle Modell-States (mit AppKey) ---
+# --- All model states (with AppKey) ---
 SIG_GETS = [
     ("OnOff",             0x8201, 0x8204, b""),
     ("Level",             0x8205, 0x8208, b""),
@@ -100,12 +100,12 @@ async def run_block(title, proxy, cfg, key, is_app, lamp, iv, keys, gets):
         try:
             r = await get(proxy, cfg, key, is_app, lamp, iv, keys, op, want, params)
         except Exception as e:
-            print(f"  {name:<20} FEHLER: {e}", flush=True)
+            print(f"  {name:<20} ERROR: {e}", flush=True)
             continue
         if r:
             print(f"  {name:<20} 0x{r[0]:x} = {r[1].hex()}", flush=True)
         else:
-            print(f"  {name:<20} (keine Antwort)", flush=True)
+            print(f"  {name:<20} (no response)", flush=True)
 
 
 async def main():
@@ -117,13 +117,13 @@ async def main():
     keys = (("app", app, 0x01), ("dev", dev, 0x02))
 
     async with MeshProxy(cfg["mac"], ctx, cfg["src"], log=lambda *_: None) as proxy:
-        await run_block("CONFIG-SERVER (DevKey)", proxy, cfg, dev, False, lamp, iv, keys, CONFIG_GETS)
-        await run_block("CONFIG-MODELL Vendor 0x0211/0x0000", proxy, cfg, dev, False, lamp, iv, keys, CONFIG_MODEL_GETS)
+        await run_block("CONFIG SERVER (DevKey)", proxy, cfg, dev, False, lamp, iv, keys, CONFIG_GETS)
+        await run_block("CONFIG MODEL Vendor 0x0211/0x0000", proxy, cfg, dev, False, lamp, iv, keys, CONFIG_MODEL_GETS)
         await run_block("HEALTH (AppKey)", proxy, cfg, app, True, lamp, iv, keys, HEALTH_GETS)
-        await run_block("MODELL-STATES (AppKey)", proxy, cfg, app, True, lamp, iv, keys, SIG_GETS)
+        await run_block("MODEL STATES (AppKey)", proxy, cfg, app, True, lamp, iv, keys, SIG_GETS)
         save_cfg(CONFIG_FILE, cfg)
 
-    print("\n# Fertig - vollstaendiges lesbares Inventar oben.", flush=True)
+    print("\n# Done - complete readable inventory above.", flush=True)
 
 
 if __name__ == "__main__":

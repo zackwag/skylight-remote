@@ -1,7 +1,7 @@
-"""Bluetooth-Mesh-Kryptografie (Mesh Profile Spec 1.0.1, Kap. 3.8/3.9).
+"""Bluetooth Mesh cryptography (Mesh Profile Spec 1.0.1, ch. 3.8/3.9).
 
-Alle Funktionen sind gegen die Sample-Daten aus Kap. 8 der Spec testbar
-(siehe test_crypto.py).
+All functions are testable against the sample data from ch. 8 of the spec
+(see test_crypto.py).
 """
 
 from cryptography.hazmat.primitives.cmac import CMAC
@@ -40,13 +40,13 @@ def k2(n: bytes, p: bytes) -> tuple[int, bytes, bytes]:
 
 
 def k3(n: bytes) -> bytes:
-    """-> 8-Byte Network ID"""
+    """-> 8-byte Network ID"""
     t = aes_cmac(s1(b"smk3"), n)
     return aes_cmac(t, b"id64\x01")[8:]
 
 
 def k4(n: bytes) -> int:
-    """-> 6-Bit AID des AppKeys"""
+    """-> 6-bit AID of the AppKey"""
     t = aes_cmac(s1(b"smk4"), n)
     return aes_cmac(t, b"id6\x01")[15] & 0x3F
 

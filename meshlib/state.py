@@ -1,10 +1,9 @@
-"""Laden/Speichern der Mesh-Konfiguration (skylight-mesh.json).
+"""Loading/saving the mesh configuration (skylight-mesh.json).
 
-Wichtig: Die Mesh-Replay-Protection verwirft Nachrichten mit bereits
-gesehener Sequenznummer stillschweigend. Damit ein abgestuerzter Lauf
-(gesendet, aber nicht gespeichert) uns nicht lahmlegt, springt die
-Sequenznummer bei jedem Laden um eine Sicherheitsmarge nach vorn und wird
-sofort zurueckgeschrieben.
+Important: mesh replay protection silently discards messages with an
+already-seen sequence number. So that a crashed run (sent, but not saved)
+doesn't paralyze us, the sequence number jumps forward by a safety margin on
+every load and is written back immediately.
 """
 
 import json

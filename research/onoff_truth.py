@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""Wahrheitstabelle fuer Generic OnOff: rohe Status-Bytes gegen den echten
-physischen Zustand.
+"""Truth table for Generic OnOff: raw status bytes against the actual physical
+state.
 
-Hintergrund: skylight.py nimmt an, dass die Firmware OnOff invertiert -- und
-zwar "inkl. der Status-Antworten". Das Schalten ist nachweislich invertiert,
-aber gemessen am Lichtsensor liefert get_power() den falschen Zustand. Dieses
-Skript trennt beide Richtungen sauber:
+Background: skylight.py assumes the firmware inverts OnOff -- specifically
+"incl. the status responses". Switching is demonstrably inverted, but measured
+at the light sensor, get_power() returns the wrong state. This script separates
+the two directions cleanly:
 
-  SET  -> welches Wire-Byte schaltet die Lampe wirklich an?
-  GET  -> welches Wire-Byte meldet die Lampe in welchem Zustand?
+  SET  -> which wire byte actually turns the lamp on?
+  GET  -> which wire byte reports the lamp in which state?
 
-Ausgegeben werden die ROHEN Bytes ohne jede Interpretation, dazu als
-unabhaengige physische Referenz der Lichtsensor aus Home Assistant. Damit
-laesst sich Wire-Byte <-> Helligkeit eindeutig zuordnen.
+It prints the RAW bytes without any interpretation, plus the light sensor from
+Home Assistant as an independent physical reference. That makes it possible to
+map wire byte <-> brightness unambiguously.
 
-Achtung: Braucht die Proxy-Verbindung exklusiv.
+Note: needs the proxy connection exclusively.
     sudo systemctl stop skylight-bridge
     HA_TOKEN=... python3 research/onoff_truth.py
     sudo systemctl start skylight-bridge
 
 Env:
     HA_URL     default http://127.0.0.1:8123
-    HA_TOKEN   Long-Lived Token (ohne den laeuft es, aber ohne Lux-Referenz)
+    HA_TOKEN   long-lived token (without it, it runs but with no lux reference)
     LUX_ENTITY default sensor.bad_anwesenheitssensor_light_sensor_light_level
-    SETTLE     Sekunden Wartezeit, bis der Sensor nachzieht (default 12)
+    SETTLE     seconds to wait for the sensor to catch up (default 12)
 """
 
 import asyncio
@@ -47,7 +47,7 @@ SETTLE = float(_os.environ.get("SETTLE", "12"))
 
 
 def lux() -> str:
-    """Lichtsensor als unabhaengige physische Referenz."""
+    """Light sensor as an independent physical reference."""
     if not HA_TOKEN:
         return "n/a"
     req = urllib.request.Request(
@@ -57,7 +57,7 @@ def lux() -> str:
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.load(r)["state"] + " lx"
     except Exception as e:
-        return f"Fehler: {e}"
+        return f"error: {e}"
 
 
 def show(label: str, params: bytes) -> None:
@@ -72,7 +72,7 @@ def show(label: str, params: bytes) -> None:
 
 async def main() -> None:
     async with SkylightClient(log=lambda *_: None) as sky:
-        print(f"\n=== Ausgangslage (Sensor: {lux()}) ===")
+        print(f"\n=== Initial state (sensor: {lux()}) ===")
         show("GET", await sky._request(OP_ONOFF_GET, b""))
 
         for wire in (0x00, 0x01):
@@ -80,14 +80,14 @@ async def main() -> None:
             show(f"SET 0x{wire:02x}",
                  await sky._request(OP_ONOFF_SET,
                                     bytes([wire, sky._next_tid()])))
-            print(f"  ... {SETTLE:.0f}s warten, bis der Sensor nachzieht",
+            print(f"  ... waiting {SETTLE:.0f}s for the sensor to catch up",
                   flush=True)
             await asyncio.sleep(SETTLE)
-            show("GET danach", await sky._request(OP_ONOFF_GET, b""))
-            print(f"  PHYSISCH: {lux()}", flush=True)
+            show("GET after", await sky._request(OP_ONOFF_GET, b""))
+            print(f"  PHYSICAL: {lux()}", flush=True)
 
         sky.save()
-        print("\nFertig. Seq gespeichert.")
+        print("\nDone. Seq saved.")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Nachlade-Lauf: holt die im full_inventory.py per Paketverlust ausgefallenen
-GETs mit Retries; korrigierte Scheduler-Opcodes; liest bei belegten Scheduler-
-Slots die Action-Eintraege (potenziell 'Day Rhythm'). Rein lesend."""
+"""Catch-up run: fetches the GETs that dropped out of full_inventory.py due to
+packet loss, with retries; corrected scheduler opcodes; for occupied scheduler
+slots, reads the action entries (potentially 'Day Rhythm'). Read-only."""
 
 import os as _os, sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
@@ -14,7 +14,7 @@ from meshlib.state import load_cfg, save_cfg
 from meshlib.proxy import MeshProxy
 from vendor_probe import listen
 
-# (Name, op, status, params, is_app)
+# (name, op, status, params, is_app)
 GETS = [
     ("Default TTL",       0x800C, 0x800D, b"", False),
     ("Relay",             0x8026, 0x8027, b"", False),
@@ -26,7 +26,7 @@ GETS = [
     ("DefaultTransTime",  0x820D, 0x820E, b"", True),
     ("HSL-Hue",           0x826E, 0x826F, b"", True),
     ("HSL-Sat",           0x8270, 0x8271, b"", True),
-    ("Scheduler(bitmap)", 0x8249, 0x824A, b"", True),   # korrigiert
+    ("Scheduler(bitmap)", 0x8249, 0x824A, b"", True),   # corrected
 ]
 
 
@@ -55,7 +55,7 @@ async def main():
     keys = (("app", app, 0x01), ("dev", dev, 0x02))
 
     async with MeshProxy(cfg["mac"], ctx, cfg["src"], log=lambda *_: None) as proxy:
-        print("=== NACHLADEN (mit Retry) ===", flush=True)
+        print("=== CATCH-UP (with retry) ===", flush=True)
         sched_bitmap = None
         for name, op, want, params, is_app in GETS:
             key = app if is_app else dev
@@ -65,21 +65,21 @@ async def main():
                 if name.startswith("Scheduler"):
                     sched_bitmap = int.from_bytes(r[1][:2], "little")
             else:
-                print(f"  {name:<20} (weiter keine Antwort)", flush=True)
+                print(f"  {name:<20} (still no response)", flush=True)
 
-        # Scheduler-Action-Eintraege lesen, wenn Slots belegt
+        # read scheduler action entries if slots are occupied
         if sched_bitmap:
             print(f"\n=== SCHEDULER-Eintraege (bitmap=0x{sched_bitmap:04x}) ===", flush=True)
             for idx in range(16):
                 if sched_bitmap & (1 << idx):
                     r = await get_retry(proxy, cfg, app, True, lamp, iv, keys,
                                         0x8248, 0x5F, bytes([idx]))
-                    print(f"  Slot {idx:>2}: {r[1].hex() if r else '(keine Antwort)'}", flush=True)
+                    print(f"  Slot {idx:>2}: {r[1].hex() if r else '(no response)'}", flush=True)
         else:
-            print("\n# Scheduler: keine belegten Slots (kein 'Day Rhythm' als Zeitplan).", flush=True)
+            print("\n# Scheduler: no occupied slots (no 'Day Rhythm' as a schedule).", flush=True)
 
         save_cfg(CONFIG_FILE, cfg)
-    print("\n# Nachladen fertig.", flush=True)
+    print("\n# Catch-up done.", flush=True)
 
 
 if __name__ == "__main__":
